@@ -1,152 +1,342 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
 <title>Job Radar — Telegram Job Filter</title>
 <style>
-  :root {
-    --bg: #eef0f2; --panel: #ffffff; --panel-raised: #f4f5f7; --border: #dcdfe3;
-    --text: #1c1f23; --text-dim: #656b73;
-    --accent: #1f9d6e; --accent-dim: #cdeee0;
-    --accent-medium: #b5760a; --accent-medium-dim: #f3e3c6;
-    --accent-contrast: #ffffff; --danger: #c8382c; --danger-dim: #f6d9d6;
-    --radius: 10px;
+  /* ---------------- themes: explicit choice + system default --------------- */
+  :root, html[data-theme="light"] {
+    --bg: #f6f8fa;
+    --bg-grad-1: #eaf5f0;
+    --bg-grad-2: #f6f8fa;
+    --panel: #ffffff;
+    --panel-raised: #f1f4f6;
+    --panel-hover: #e9eef2;
+    --border: #c9d2db;
+    --border-strong: #a8b4c0;
+    --text: #10151a;          /* near-black: 15.8:1 on white            */
+    --text-soft: #33414d;     /* secondary body text: 9.9:1              */
+    --text-dim: #55636f;      /* labels/hints: 6.4:1 (was 4.4:1 before)  */
+    --accent: #0f7f5c;
+    --accent-hover: #0c6a4c;
+    --accent-dim: #d7f0e6;
+    --accent-text: #ffffff;
+    --warn: #8a5a00;
+    --warn-dim: #fdf0d5;
+    --danger: #b3261e;
+    --danger-dim: #fde7e5;
+    --shadow: 0 1px 2px rgba(16,21,26,.06), 0 8px 24px rgba(16,21,26,.06);
+    --ring: 0 0 0 3px rgba(15,127,92,.25);
+    --radius: 12px;
   }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #1b1d20; --panel: #242629; --panel-raised: #2c2e32; --border: #383b40;
-      --text: #eceeef; --text-dim: #9a9fa6;
-      --accent: #35d499; --accent-dim: #1d5c46;
-      --accent-medium: #e8a33d; --accent-medium-dim: #4a3a1a;
-      --accent-contrast: #05261b; --danger: #e2574c; --danger-dim: #4a2420;
-    }
+  html[data-theme="dark"] {
+    --bg: #0f1419;
+    --bg-grad-1: #101d18;
+    --bg-grad-2: #0f1419;
+    --panel: #171d24;
+    --panel-raised: #1f272f;
+    --panel-hover: #27313a;
+    --border: #36414c;
+    --border-strong: #4a5866;
+    --text: #f2f5f8;          /* 15.6:1 on panel                          */
+    --text-soft: #cdd6df;
+    --text-dim: #a9b4bf;      /* 8.1:1 — readable, unlike the old #9a9fa6 */
+    --accent: #3ddc9a;
+    --accent-hover: #64e7b0;
+    --accent-dim: #123a2d;
+    --accent-text: #05231a;
+    --warn: #ffc467;
+    --warn-dim: #3a2f14;
+    --danger: #ff8a80;
+    --danger-dim: #3d1b18;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
+    --ring: 0 0 0 3px rgba(61,220,154,.3);
+    --radius: 12px;
   }
+
   * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
   body {
-    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
-    background: var(--bg); color: var(--text);
-    max-width: 780px; margin: 0 auto; padding: 44px 20px 80px; line-height: 1.5;
+    font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    background: var(--bg);
+    background-image: radial-gradient(900px 400px at 50% -80px, var(--bg-grad-1), var(--bg-grad-2) 70%);
+    background-attachment: fixed;
+    color: var(--text);
+    max-width: 800px; margin: 0 auto; padding: 28px 18px 90px;
+    line-height: 1.55; font-size: 15px;
+    -webkit-font-smoothing: antialiased;
+    transition: background-color .25s ease, color .25s ease;
   }
-  header { margin-bottom: 26px; }
-  header h1 { font-size: 1.65rem; font-weight: 650; margin: 0 0 6px; letter-spacing: -0.01em; }
-  header p { color: var(--text-dim); margin: 0; font-size: 0.95rem; max-width: 56ch; }
-  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 22px; }
-  .panel + .panel { margin-top: 16px; }
-  .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-  .panel-head h2 { font-size: 0.95rem; margin: 0; font-weight: 650; }
-  label { display: block; font-size: 0.85rem; font-weight: 600; color: var(--text-dim); margin-top: 16px; margin-bottom: 6px; }
+
+  /* ------------------------------- header --------------------------------- */
+  .topbar { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 22px; }
+  .brand { display: flex; align-items: center; gap: 11px; }
+  .logo {
+    width: 38px; height: 38px; border-radius: 10px; flex: none;
+    background: linear-gradient(140deg, var(--accent), var(--accent-hover));
+    display: grid; place-items: center; color: var(--accent-text);
+    font-weight: 800; font-size: 17px; box-shadow: var(--shadow);
+  }
+  header h1 { font-size: 1.32rem; font-weight: 700; margin: 0; letter-spacing: -0.02em; }
+  header .tagline { color: var(--text-dim); font-size: .84rem; margin: 1px 0 0; }
+
+  .theme-toggle {
+    display: inline-flex; align-items: center; gap: 2px; padding: 3px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 999px;
+    box-shadow: var(--shadow);
+  }
+  .theme-toggle button {
+    border: 0; background: transparent; cursor: pointer; color: var(--text-dim);
+    width: 30px; height: 30px; border-radius: 999px; display: grid; place-items: center;
+    transition: background .15s ease, color .15s ease;
+    font-size: 14px; line-height: 1;
+  }
+  .theme-toggle button:hover { background: var(--panel-hover); color: var(--text); }
+  .theme-toggle button[aria-pressed="true"] { background: var(--accent-dim); color: var(--accent); }
+  html[data-theme="dark"] .theme-toggle button[aria-pressed="true"] { color: var(--accent); }
+
+  .intro { color: var(--text-soft); font-size: .93rem; margin: 0 0 20px; max-width: 62ch; }
+
+  /* ------------------------------- panels --------------------------------- */
+  .panel {
+    background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 20px; box-shadow: var(--shadow);
+    transition: background-color .25s ease, border-color .25s ease;
+  }
+  .panel + .panel, .panel + .stats { margin-top: 16px; }
+  .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 4px; }
+  .panel-head h2 { font-size: .95rem; margin: 0; font-weight: 700; letter-spacing: -0.01em; }
+
+  .badge-state {
+    font-size: .7rem; font-weight: 700; padding: 3px 9px; border-radius: 999px;
+    background: var(--danger-dim); color: var(--danger); white-space: nowrap;
+  }
+  .badge-state.ok { background: var(--accent-dim); color: var(--accent); }
+
+  label { display: block; font-size: .82rem; font-weight: 650; color: var(--text-soft); margin: 16px 0 6px; }
   label:first-of-type { margin-top: 0; }
   input, textarea, select {
     width: 100%; background: var(--panel-raised); border: 1px solid var(--border);
-    color: var(--text); padding: 10px 12px; border-radius: 8px; font-size: 0.95rem; font-family: inherit;
+    color: var(--text); padding: 11px 12px; border-radius: 9px; font-size: .93rem;
+    font-family: inherit; transition: border-color .15s ease, box-shadow .15s ease, background .15s ease;
   }
-  input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); }
-  textarea { resize: vertical; min-height: 62px; }
-  .row-split { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; }
+  input::placeholder, textarea::placeholder { color: var(--text-dim); opacity: 1; }
+  input:hover, textarea:hover, select:hover { border-color: var(--border-strong); }
+  input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); box-shadow: var(--ring); }
+  textarea { resize: vertical; min-height: 66px; line-height: 1.5; }
+
+  .row-split { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; margin-top: 4px; }
   .row-split > div { flex: 1; min-width: 160px; }
-  .hint { font-size: 0.78rem; color: var(--text-dim); margin-top: 6px; line-height: 1.45; }
-  .badge-state { font-size: 0.72rem; font-weight: 700; padding: 3px 9px; border-radius: 999px; background: var(--danger-dim); color: var(--danger); }
-  .badge-state.ok { background: var(--accent-dim); color: var(--accent); }
+  .hint { font-size: .78rem; color: var(--text-dim); margin-top: 6px; line-height: 1.5; }
+  strong, b { color: var(--text); }
+
   button { font-family: inherit; }
   button.primary {
-    margin-top: 20px; width: 100%; padding: 12px 20px; font-size: 1rem; font-weight: 600;
-    border: none; border-radius: 8px; background: var(--accent); color: var(--accent-contrast);
-    cursor: pointer; transition: filter .15s ease;
+    margin-top: 18px; width: 100%; padding: 13px 20px; font-size: .97rem; font-weight: 700;
+    border: none; border-radius: 10px; background: var(--accent); color: var(--accent-text);
+    cursor: pointer; box-shadow: var(--shadow);
+    transition: background .15s ease, transform .1s ease, box-shadow .15s ease;
   }
-  button.primary:hover { filter: brightness(1.08); }
-  button.primary:disabled { opacity: .55; cursor: default; filter: none; }
+  button.primary:hover:not(:disabled) { background: var(--accent-hover); transform: translateY(-1px); }
+  button.primary:active:not(:disabled) { transform: translateY(0); }
+  button.primary:disabled { opacity: .6; cursor: default; box-shadow: none; }
+
   button.small, a.small-link {
-    font-size: 0.82rem; padding: 6px 12px; border-radius: 7px; border: 1px solid var(--border);
-    background: transparent; color: var(--text); cursor: pointer; text-decoration: none;
-    display: inline-block;
+    font-size: .8rem; padding: 6px 11px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--panel-raised); color: var(--text-soft); cursor: pointer; text-decoration: none;
+    display: inline-block; font-weight: 600;
+    transition: background .15s ease, border-color .15s ease, color .15s ease;
   }
-  button.small:hover, a.small-link:hover { border-color: var(--text-dim); }
+  button.small:hover, a.small-link:hover { background: var(--panel-hover); border-color: var(--border-strong); color: var(--text); }
   button.danger { border-color: var(--danger); color: var(--danger); }
+  button.danger:hover { background: var(--danger-dim); }
+
   details { margin-top: 16px; }
-  details summary { cursor: pointer; font-size: 0.85rem; color: var(--text-dim); user-select: none; }
+  details summary {
+    cursor: pointer; font-size: .82rem; color: var(--text-soft); user-select: none;
+    font-weight: 600; padding: 6px 0; list-style: none;
+  }
+  details summary::-webkit-details-marker { display: none; }
+  details summary::before { content: '▸ '; color: var(--text-dim); }
+  details[open] summary::before { content: '▾ '; }
   details summary:hover { color: var(--text); }
-  details > label:first-of-type { margin-top: 14px; }
-  #status-line { margin-top: 14px; font-size: 0.88rem; color: var(--text-dim); min-height: 1.2em; }
-  #status-line.is-error { color: var(--danger); }
-  .stats { display: flex; gap: 10px; margin-top: 18px; flex-wrap: wrap; }
-  .stat { flex: 1; min-width: 110px; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 13px 15px; }
-  .stat .num { font-size: 1.4rem; font-weight: 650; line-height: 1; }
-  .stat .label { font-size: 0.76rem; color: var(--text-dim); margin-top: 4px; }
+
+  #status-line { margin-top: 14px; font-size: .86rem; color: var(--text-soft); min-height: 1.2em; }
+  #status-line.is-error { color: var(--danger); font-weight: 600; }
+
+  /* ------------------------------- stats ---------------------------------- */
+  .stats { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
+  .stat {
+    flex: 1; min-width: 108px; background: var(--panel); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 13px 15px; box-shadow: var(--shadow);
+  }
+  .stat .num { font-size: 1.45rem; font-weight: 750; line-height: 1.1; letter-spacing: -0.02em; }
+  .stat .label { font-size: .74rem; color: var(--text-dim); margin-top: 3px; font-weight: 600; }
   .stat.matched .num { color: var(--accent); }
-  .stat.expired .num { color: var(--text-dim); }
+  .stat.warned .num { color: var(--warn); }
   .stat.failed .num { color: var(--danger); }
-  .warnings { margin-top: 14px; padding: 12px 14px; border: 1px solid var(--danger); background: var(--danger-dim); border-radius: var(--radius); font-size: 0.84rem; }
+
+  .warnings {
+    margin-top: 14px; padding: 12px 14px; border: 1px solid var(--danger);
+    background: var(--danger-dim); border-radius: var(--radius); font-size: .83rem; color: var(--text);
+  }
   .warnings b { color: var(--danger); }
+
+  /* ------------------------------ results --------------------------------- */
   .results { margin-top: 16px; display: flex; flex-direction: column; gap: 10px; }
-  .result { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; }
-  .result-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-  .badge { display: inline-flex; align-items: center; gap: 6px; font-size: 0.78rem; font-weight: 600; padding: 3px 9px; border-radius: 999px; }
+  .result {
+    background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 15px 17px; box-shadow: var(--shadow);
+    border-left: 3px solid var(--border-strong);
+    transition: transform .12s ease, border-color .15s ease, box-shadow .15s ease;
+  }
+  .result:hover { transform: translateY(-1px); border-color: var(--border-strong); }
+  .result.is-high { border-left-color: var(--accent); }
+  .result.is-medium { border-left-color: var(--warn); }
+  .result-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .badge { display: inline-flex; align-items: center; gap: 6px; font-size: .75rem; font-weight: 700; padding: 3px 10px; border-radius: 999px; }
   .badge::before { content: ''; width: 6px; height: 6px; border-radius: 50%; }
   .badge.high { background: var(--accent-dim); color: var(--accent); }
   .badge.high::before { background: var(--accent); }
-  .badge.medium { background: var(--accent-medium-dim); color: var(--accent-medium); }
-  .badge.medium::before { background: var(--accent-medium); }
-  .result-date { font-size: 0.78rem; color: var(--text-dim); }
-  .result-reason { font-size: 0.85rem; color: var(--text-dim); margin-top: 8px; }
-  .result-text { font-size: 0.92rem; margin-top: 10px; white-space: pre-wrap; }
-  .result-actions { margin-top: 12px; display: flex; gap: 10px; flex-wrap: wrap; }
-  .btn-solid { font-size: 0.85rem; padding: 7px 14px; border-radius: 7px; cursor: pointer; text-decoration: none; border: none; background: var(--accent); color: var(--accent-contrast); font-weight: 600; }
-  .btn-solid:hover { filter: brightness(1.08); }
-  .empty-state { margin-top: 16px; padding: 22px; text-align: center; color: var(--text-dim); border: 1px dashed var(--border); border-radius: var(--radius); font-size: 0.9rem; }
+  .badge.medium { background: var(--warn-dim); color: var(--warn); }
+  .badge.medium::before { background: var(--warn); }
+  .result-date { font-size: .76rem; color: var(--text-dim); font-weight: 600; }
+  .result-reason { font-size: .85rem; color: var(--text-soft); margin-top: 8px; }
+  .result-text {
+    font-size: .9rem; margin-top: 10px; white-space: pre-wrap; color: var(--text);
+    max-height: 260px; overflow: hidden; position: relative;
+  }
+  .result-text.expanded { max-height: none; }
+  .result-actions { margin-top: 12px; display: flex; gap: 9px; flex-wrap: wrap; align-items: center; }
+  .btn-solid {
+    font-size: .84rem; padding: 8px 14px; border-radius: 8px; cursor: pointer; text-decoration: none;
+    border: none; background: var(--accent); color: var(--accent-text); font-weight: 700;
+    transition: background .15s ease;
+  }
+  .btn-solid:hover { background: var(--accent-hover); }
+
+  .empty-state {
+    margin-top: 16px; padding: 26px 20px; text-align: center; color: var(--text-soft);
+    border: 1px dashed var(--border-strong); border-radius: var(--radius); font-size: .89rem;
+    background: var(--panel);
+  }
+
+  /* ----------------------------- progress --------------------------------- */
   .progress-wrap { margin-top: 16px; display: none; }
   .progress-wrap.show { display: block; }
-  .bar { height: 7px; background: var(--panel-raised); border: 1px solid var(--border); border-radius: 999px; overflow: hidden; }
-  .bar > i { display: block; height: 100%; width: 0%; background: var(--accent); transition: width .35s ease; }
-  .progress-meta { display: flex; justify-content: space-between; font-size: 0.8rem; color: var(--text-dim); margin-top: 8px; gap: 10px; align-items: center; }
-  .stage-line { font-size: 0.88rem; margin-bottom: 8px; }
-  .plan-box { margin-top: 14px; font-size: 0.83rem; color: var(--text-dim); background: var(--panel-raised); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; display: none; }
-  .plan-box.show { display: block; }
-  .plan-box b { color: var(--text); }
-  #boot-overlay {
-    position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center;
-    justify-content: center; flex-direction: column; gap: 14px; z-index: 50; text-align: center; padding: 24px;
+  .bar { height: 8px; background: var(--panel-raised); border-radius: 999px; overflow: hidden; }
+  .bar > i {
+    display: block; height: 100%; width: 0%; border-radius: 999px;
+    background: linear-gradient(90deg, var(--accent), var(--accent-hover));
+    transition: width .4s cubic-bezier(.2,.8,.3,1);
   }
-  #boot-overlay.hide { display: none; }
-  .spinner { width: 26px; height: 26px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 1s linear infinite; }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  .key-warn { font-size: 0.78rem; color: var(--text-dim); margin-top: 8px; }
-  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.82em; background: var(--panel-raised); padding: 1px 5px; border-radius: 4px; }
+  .bar > i.indeterminate { width: 35% !important; animation: slide 1.2s ease-in-out infinite; }
+  @keyframes slide { 0% { margin-left: 0; } 50% { margin-left: 65%; } 100% { margin-left: 0; } }
+  .progress-meta { display: flex; justify-content: space-between; align-items: center; font-size: .79rem; color: var(--text-dim); margin-top: 9px; gap: 10px; }
+  .stage-line { font-size: .86rem; margin-bottom: 9px; color: var(--text-soft); font-weight: 600; }
+  .spinner-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); margin-right: 7px; animation: pulse 1.1s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: .3; transform: scale(.85); } 50% { opacity: 1; transform: scale(1.1); } }
 
-  .provider-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 16px; }
-  @media (max-width: 620px) { .provider-cards { grid-template-columns: 1fr; } }
+  .plan-box {
+    margin-top: 14px; font-size: .82rem; color: var(--text-soft); background: var(--panel-raised);
+    border: 1px solid var(--border); border-left: 3px solid var(--accent);
+    border-radius: 9px; padding: 11px 13px; display: none;
+  }
+  .plan-box.show { display: block; animation: rise .2s ease both; }
+  .plan-box b { color: var(--text); }
+
+  /* ------------------------------ provider -------------------------------- */
+  .provider-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 14px; }
+  @media (max-width: 640px) { .provider-cards { grid-template-columns: 1fr; } }
   .pcard {
     position: relative; text-align: left; cursor: pointer; font-family: inherit;
-    background: var(--panel-raised); border: 1px solid var(--border);
+    background: var(--panel-raised); border: 1.5px solid var(--border);
     border-radius: var(--radius); padding: 12px 13px; color: var(--text);
     display: flex; flex-direction: column; gap: 4px;
-    transition: border-color .15s ease, background .15s ease;
+    transition: border-color .15s ease, background .15s ease, transform .12s ease, box-shadow .15s ease;
   }
-  .pcard:hover { border-color: var(--text-dim); }
-  .pcard.is-active { border-color: var(--accent); background: var(--panel); box-shadow: inset 0 0 0 1px var(--accent); }
-  .pcard-top { font-size: 0.9rem; font-weight: 650; display: flex; align-items: center; gap: 7px; }
-  .pcard-dot { width: 9px; height: 9px; border-radius: 50%; border: 2px solid var(--border); background: transparent; flex: none; }
-  .pcard.is-active .pcard-dot { border-color: var(--accent); background: var(--accent); }
-  .pcard-sub { font-size: 0.76rem; color: var(--text-dim); line-height: 1.4; }
+  .pcard:hover { border-color: var(--border-strong); transform: translateY(-1px); }
+  .pcard:focus-visible { outline: none; box-shadow: var(--ring); }
+  .pcard.is-active { border-color: var(--accent); background: var(--panel); box-shadow: var(--ring); }
+  .pcard-top { font-size: .89rem; font-weight: 750; display: flex; align-items: center; gap: 7px; }
+  .pcard-dot { width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--border-strong); background: transparent; flex: none; transition: all .15s ease; }
+  .pcard.is-active .pcard-dot { border-color: var(--accent); background: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
+  .pcard-sub { font-size: .75rem; color: var(--text-dim); line-height: 1.45; }
   .pcard-tag {
-    align-self: flex-start; margin-top: 5px; font-size: 0.66rem; font-weight: 700;
-    text-transform: uppercase; letter-spacing: .04em; padding: 2px 7px; border-radius: 999px;
+    align-self: flex-start; margin-top: 5px; font-size: .64rem; font-weight: 800;
+    text-transform: uppercase; letter-spacing: .05em; padding: 2px 8px; border-radius: 999px;
     background: var(--accent-dim); color: var(--accent);
   }
-  .pcard[data-provider="custom"] .pcard-tag { background: var(--panel-raised); color: var(--text-dim); border: 1px solid var(--border); }
+  .pcard[data-provider="custom"] .pcard-tag { background: var(--panel-hover); color: var(--text-dim); }
 
   .howto {
-    margin-top: 14px; padding: 14px 16px; border: 1px dashed var(--border);
-    border-radius: var(--radius); background: var(--panel-raised);
+    margin-top: 14px; padding: 14px 16px; border: 1px solid var(--border);
+    border-left: 3px solid var(--accent); border-radius: 9px; background: var(--panel-raised);
+    animation: rise .18s ease both;
   }
   .howto-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-  .howto-head span { font-size: 0.86rem; font-weight: 650; }
-  .howto ol { margin: 10px 0 0; padding-left: 20px; font-size: 0.82rem; color: var(--text-dim); line-height: 1.65; }
-  .howto ol li { margin-bottom: 2px; }
-  .howto code { font-size: 0.78rem; }
+  .howto-head span { font-size: .85rem; font-weight: 750; }
+  .howto ol { margin: 10px 0 0; padding-left: 20px; font-size: .81rem; color: var(--text-soft); line-height: 1.7; }
+  .howto ol li { margin-bottom: 3px; }
+  .howto ol li::marker { color: var(--accent); font-weight: 700; }
 
-  @media (prefers-reduced-motion: no-preference) { .result { animation: rise .2s ease both; } }
-  @keyframes rise { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+  /* ---------------------------- model picker ------------------------------ */
+  .model-row { display: flex; gap: 9px; align-items: stretch; margin-top: 6px; }
+  .model-row input { flex: 1; }
+  .model-row button { white-space: nowrap; margin: 0; }
+
+  .model-list { margin-top: 8px; display: none; }
+  .model-list.show { display: block; animation: rise .18s ease both; }
+  .model-list-inner {
+    max-height: 260px; overflow-y: auto; border: 1px solid var(--border);
+    border-radius: 9px; background: var(--panel);
+  }
+  .model-opt {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 9px 12px; cursor: pointer; font-size: .84rem; color: var(--text);
+    border-bottom: 1px solid var(--border); background: transparent; border-left: 0; border-right: 0; border-top: 0;
+    width: 100%; text-align: left; font-family: inherit; transition: background .12s ease;
+  }
+  .model-opt:last-child { border-bottom: 0; }
+  .model-opt:hover { background: var(--panel-hover); }
+  .model-opt .m-name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .81rem; }
+  .model-opt .m-tag {
+    font-size: .63rem; font-weight: 800; text-transform: uppercase; letter-spacing: .04em;
+    padding: 2px 7px; border-radius: 999px; background: var(--accent-dim); color: var(--accent); flex: none;
+  }
+  .model-opt .m-tag.free { background: var(--warn-dim); color: var(--warn); }
+
+  .models-status { font-size: .78rem; margin-top: 7px; color: var(--text-soft); display: flex; align-items: center; gap: 7px; }
+  .models-status.err { color: var(--danger); font-weight: 600; }
+  .models-status .mini-spin {
+    width: 12px; height: 12px; border: 2px solid var(--border-strong); border-top-color: var(--accent);
+    border-radius: 50%; animation: spin .7s linear infinite; flex: none;
+  }
+
+  /* ------------------------------- boot ----------------------------------- */
+  #boot-overlay {
+    position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center;
+    justify-content: center; flex-direction: column; gap: 14px; z-index: 60; text-align: center; padding: 24px;
+  }
+  #boot-overlay.hide { display: none; }
+  .spinner { width: 26px; height: 26px; border: 3px solid var(--border-strong); border-top-color: var(--accent); border-radius: 50%; animation: spin .9s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .key-warn { font-size: .77rem; color: var(--text-dim); margin-top: 9px; }
+  code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .82em;
+    background: var(--panel-hover); color: var(--text); padding: 1.5px 5px; border-radius: 4px;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .result, .panel { animation: rise .22s ease both; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { animation-duration: .001ms !important; transition-duration: .001ms !important; }
+  }
+  @keyframes rise { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
 </style>
 </head>
 <body>
@@ -154,12 +344,25 @@
 <div id="boot-overlay">
   <div class="spinner"></div>
   <div><b>Waking the server…</b></div>
-  <div class="hint" style="max-width:34ch">Free hosts sleep after 15 minutes idle. This first load can take up to a minute.</div>
+  <div class="hint" style="max-width:36ch">Free hosts sleep after 15 minutes idle. This first load can take up to a minute.</div>
 </div>
 
 <header>
-  <h1>Job Radar</h1>
-  <p>Reads a public Telegram job channel, skips posts past their deadline, and shows only what matches your profile. Free to use — the AI runs on your own free API key.</p>
+  <div class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">JR</span>
+      <div>
+        <h1>Job Radar</h1>
+        <p class="tagline">Telegram job filter</p>
+      </div>
+    </div>
+    <div class="theme-toggle" role="group" aria-label="Colour theme">
+      <button type="button" data-theme-btn="system" title="Follow system" aria-pressed="true">◐</button>
+      <button type="button" data-theme-btn="light" title="Light" aria-pressed="false">☀</button>
+      <button type="button" data-theme-btn="dark" title="Dark" aria-pressed="false">☾</button>
+    </div>
+  </div>
+  <p class="intro">Reads a public Telegram job channel, skips posts past their deadline, and shows only what matches your profile. Free to use — the AI runs on your own free API key.</p>
 </header>
 
 <!-- ============ STEP 1: key ============ -->
@@ -168,10 +371,10 @@
     <h2>1 · Connect your AI account</h2>
     <span class="badge-state" id="key-state">not set</span>
   </div>
-  <p class="hint" style="margin-top:10px">
-    Job Radar is free — but the AI work runs on <b>your own</b> free API key, so this site never
-    pays for your searches. Your key is saved in this browser only and sent with your scans; it is
-    never written to the server, never logged, and never shared.
+  <p class="hint" style="margin-top:8px">
+    This site never pays for your searches — the AI runs on <strong>your own free key</strong>.
+    It is saved in this browser only and sent with your scans: never written to the server,
+    never logged, never shared.
   </p>
 
   <div class="provider-cards" role="group" aria-label="Choose your AI provider">
@@ -182,7 +385,7 @@
     </button>
     <button type="button" class="pcard" data-provider="groq" aria-pressed="false">
       <span class="pcard-top"><span class="pcard-dot"></span>Groq</span>
-      <span class="pcard-sub">Llama / GPT-OSS · very fast<br>No credit card</span>
+      <span class="pcard-sub">GPT-OSS · very fast<br>No credit card</span>
       <span class="pcard-tag">Fastest</span>
     </button>
     <button type="button" class="pcard" data-provider="custom" aria-pressed="false">
@@ -202,24 +405,30 @@
     <div class="hint" id="howto-note" style="margin-top:8px"></div>
   </div>
 
-  <label for="llm_model">Model</label>
-  <input id="llm_model" placeholder="gemini-2.5-flash" list="model-suggestions">
-  <datalist id="model-suggestions"></datalist>
-
-  <label for="llm_api_key">API key</label>
-  <input id="llm_api_key" type="password" autocomplete="off" placeholder="paste your key here">
-  <div class="key-warn">&#128274; Paste it only on this site. Keys are not checked until your first scan.</div>
-
   <details id="advanced">
     <summary>Advanced: base URL &amp; options</summary>
-    <label for="llm_base_url">Base URL <span style="font-weight:400">(auto-filled from your choice)</span></label>
+    <label for="llm_base_url">Base URL</label>
     <input id="llm_base_url" placeholder="https://generativelanguage.googleapis.com/v1beta/openai">
     <div class="hint" id="base-url-hint"></div>
-    <label style="display:flex;align-items:center;gap:8px;font-weight:500">
+    <label style="display:flex;align-items:center;gap:8px;font-weight:600">
       <input type="checkbox" id="remember_key" checked style="width:auto">
       Remember my key on this device only
     </label>
   </details>
+
+  <label for="llm_api_key">API key</label>
+  <input id="llm_api_key" type="password" autocomplete="off" placeholder="paste your key here">
+  <div class="key-warn" style="display:flex;gap:7px;align-items:flex-start"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex:none;margin-top:3px;opacity:.75"><rect x="4" y="10.5" width="16" height="10.5" rx="2.5"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg><span>Pasted here only. Your key is checked when you load the model list.</span></div>
+
+  <label for="llm_model">Model</label>
+  <div class="model-row">
+    <input id="llm_model" placeholder="load the list, or type a model name">
+    <button type="button" class="small" id="load-models-btn">Load models</button>
+  </div>
+  <div class="models-status" id="models-status"></div>
+  <div class="model-list" id="model-list">
+    <div class="model-list-inner" id="model-list-inner"></div>
+  </div>
 
   <button class="primary" id="save-key-btn">Save key &amp; continue</button>
   <div id="status-line"></div>
@@ -231,7 +440,7 @@
     <h2>2 · What to scan</h2>
     <button class="small" id="key-toggle">change key</button>
   </div>
-  <div class="hint" id="active-provider" style="margin-top:8px"></div>
+  <div class="hint" id="active-provider" style="margin-top:6px"></div>
 
   <label for="channel">Telegram channel</label>
   <input id="channel" placeholder="@ethio_job_vacancy1 · or https://t.me/Ethiojobs2000">
@@ -272,8 +481,8 @@
 <div class="stats" id="stats" style="display:none">
   <div class="stat"><div class="num" id="stat-scanned">0</div><div class="label">Posts scanned</div></div>
   <div class="stat matched"><div class="num" id="stat-matched">0</div><div class="label">Matches</div></div>
-  <div class="stat expired" id="stat-expired-box" style="display:none"><div class="num" id="stat-expired">0</div><div class="label">Expired, skipped</div></div>
-  <div class="stat expired" id="stat-dupes-box" style="display:none"><div class="num" id="stat-dupes">0</div><div class="label">Duplicates dropped</div></div>
+  <div class="stat warned" id="stat-expired-box" style="display:none"><div class="num" id="stat-expired">0</div><div class="label">Expired, skipped</div></div>
+  <div class="stat"><div class="num" id="stat-dupes" style="display:none">0</div><div class="label" id="stat-dupes-label" style="display:none">Duplicates dropped</div></div>
   <div class="stat failed" id="stat-failed-box" style="display:none"><div class="num" id="stat-failed">0</div><div class="label">Batches failed</div></div>
 </div>
 
@@ -283,38 +492,39 @@
 <script>
 /* ------------------------------------------------------------------ state */
 const LS = {
-  key: 'jr_llm_key_v2',
-  base: 'jr_llm_base_v2',
-  model: 'jr_llm_model_v2',
-  provider: 'jr_provider_v2',
-  remember: 'jr_remember_v2',
-  cursor: 'jr_cursor_v2',
-  inputs: 'jr_inputs_v2',
+  key: 'jr_llm_key_v3',
+  base: 'jr_llm_base_v3',
+  model: 'jr_llm_model_v3',
+  provider: 'jr_provider_v3',
+  remember: 'jr_remember_v3',
+  cursor: 'jr_cursor_v3',
+  inputs: 'jr_inputs_v3',
+  theme: 'jr_theme_v3',
 };
 
-/* Three choices, each with its own instructions and links. */
+/* Providers. Model names are NOT hardcoded as gospel: the "Load models"
+   button asks the provider what it serves today (Gemini retired 2.5-flash on
+   20 Oct 2026). The `suggested` list is only a starting hint. */
 const PROVIDERS = {
   gemini: {
     label: 'Google AI Studio',
     base: 'https://generativelanguage.googleapis.com/v1beta/openai',
-    model: 'gemini-2.5-flash',
-    models: ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-3-flash', 'gemini-2.5-pro'],
+    suggested: ['gemini-3.8-flash', 'gemini-3.5-flash-lite', 'gemini-3.6-flash', 'gemini-3.1-flash-lite'],
     keyUrl: 'https://aistudio.google.com/app/apikey',
     keyUrlLabel: 'Open AI Studio ↗',
     title: 'Get your free Gemini key (about 2 minutes)',
     steps: [
       'Sign in at aistudio.google.com with any Google account.',
-      'Click "Create API key" (or "Get API key") and pick or create a project.',
+      'Click "Create API key" and pick or create a project.',
       'Copy the key — it starts with AIza…',
-      'Paste it below. No credit card is needed for the free tier.'
+      'Paste it below, then press "Load models" to see what your key can use today.'
     ],
-    note: 'The free tier is rate-limited per day and resets daily. If you see quota or 429 errors, wait until tomorrow or switch to Groq.'
+    note: 'Model names are retired often (gemini-2.5-flash was shut down in October 2026). Always press "Load models" instead of trusting an old name from a tutorial.'
   },
   groq: {
     label: 'Groq',
     base: 'https://api.groq.com/openai/v1',
-    model: 'llama-3.3-70b-versatile',
-    models: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'openai/gpt-oss-120b', 'qwen/qwen3.8-27b'],
+    suggested: ['openai/gpt-oss-120b', 'openai/gpt-oss-20b', 'qwen/qwen3.8-27b'],
     keyUrl: 'https://console.groq.com/keys',
     keyUrlLabel: 'Open Groq console ↗',
     title: 'Get your free Groq key (about 1 minute)',
@@ -322,25 +532,24 @@ const PROVIDERS = {
       'Sign up at console.groq.com — Google or GitHub login works.',
       'Open "API Keys", then "Create API Key".',
       'Copy the key immediately: Groq shows it only once.',
-      'Paste it below. No credit card required.'
+      'Paste it below, then press "Load models" to list what is live.'
     ],
-    note: 'Groq is very fast but limits tokens per minute on the free tier. If you get 429 errors, scan fewer days at a time.'
+    note: 'Groq moves models to enterprise-only without notice. If a model fails, load the list again and pick one that is still offered.'
   },
   custom: {
     label: 'Custom / other provider',
     base: '',
-    model: '',
-    models: [],
+    suggested: [],
     keyUrl: '',
     keyUrlLabel: '',
     title: 'Use any OpenAI-compatible provider',
     steps: [
-      'Open "Advanced" below and fill in the Base URL — it must be an OpenAI-compatible endpoint.',
-      'Examples: https://api.openai.com/v1 · https://openrouter.ai/api/v1 · https://open.bigmodel.cn/api/paas/v4 · your own server.',
-      'Type the exact model name that provider expects.',
-      'Paste that provider\'s key below.'
+      'Open "Advanced" below and fill in the Base URL of an OpenAI-compatible endpoint.',
+      'Examples: https://api.openai.com/v1 · https://openrouter.ai/api/v1 · https://open.bigmodel.cn/api/paas/v4',
+      'Paste that provider\'s key below.',
+      'Press "Load models" — if the provider has no /models endpoint, type the model name yourself.'
     ],
-    note: 'The base URL and the model name must belong to the SAME provider — mixing them is the most common cause of 400 and 404 errors.'
+    note: 'The base URL and the model name must belong to the SAME provider. Mixing them is the most common cause of 400 and 404 errors.'
   },
 };
 
@@ -348,6 +557,34 @@ let currentJobId = null;
 let pollTimer = null;
 let config = {};
 let activeProvider = 'gemini';
+let loadedModels = [];
+
+/* ------------------------------------------------------------------- theme */
+function applyTheme(mode) {
+  const resolved = mode === 'system'
+    ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+    : mode;
+  document.documentElement.setAttribute('data-theme', resolved);
+  document.documentElement.setAttribute('data-theme-mode', mode);
+  document.querySelectorAll('[data-theme-btn]').forEach(function (b) {
+    b.setAttribute('aria-pressed', b.dataset.themeBtn === mode ? 'true' : 'false');
+  });
+  try { localStorage.setItem(LS.theme, mode); } catch (_) {}
+}
+
+function initTheme() {
+  let saved = 'system';
+  try { saved = localStorage.getItem(LS.theme) || 'system'; } catch (_) {}
+  applyTheme(saved);
+  document.querySelectorAll('[data-theme-btn]').forEach(function (btn) {
+    btn.addEventListener('click', function () { applyTheme(btn.dataset.themeBtn); });
+  });
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () {
+    let mode = 'system';
+    try { mode = localStorage.getItem(LS.theme) || 'system'; } catch (_) {}
+    if (mode === 'system') applyTheme('system');
+  });
+}
 
 /* ------------------------------------------------------------------ boot */
 window.addEventListener('DOMContentLoaded', boot);
@@ -357,14 +594,19 @@ function wireEvents() {
     card.addEventListener('click', function () { selectProvider(card.dataset.provider); });
   });
   document.getElementById('save-key-btn').addEventListener('click', saveKey);
+  document.getElementById('load-models-btn').addEventListener('click', loadModels);
   document.getElementById('key-toggle').addEventListener('click', toggleKeyPanel);
   document.getElementById('resume').addEventListener('change', applyCursorChoice);
   document.getElementById('search-btn').addEventListener('click', runSearch);
   document.getElementById('cancel-btn').addEventListener('click', cancelScan);
   document.getElementById('since').addEventListener('change', updatePlan);
+  document.getElementById('llm_api_key').addEventListener('paste', function () {
+    setTimeout(function () { setModelsStatus('Key pasted — press "Load models" to check it and see the live list.', false); }, 50);
+  });
 }
 
 async function boot() {
+  initTheme();
   wireEvents();
   document.getElementById('since').value = daysAgoISO(14);
   restoreLocalState();
@@ -399,8 +641,9 @@ async function loadConfig() {
     config = {};
   }
   if (config.has_server_key) {
-    document.getElementById('key-state').textContent = 'server key available';
-    document.getElementById('key-state').classList.add('ok');
+    const el = document.getElementById('key-state');
+    el.textContent = 'server key available';
+    el.classList.add('ok');
     showSearchPanel(true);
   }
 }
@@ -413,23 +656,13 @@ function restoreLocalState() {
   activeProvider = localStorage.getItem(LS.provider) || 'gemini';
   const preset = PROVIDERS[activeProvider] || PROVIDERS.gemini;
   document.getElementById('llm_base_url').value = localStorage.getItem(LS.base) || preset.base;
-  document.getElementById('llm_model').value = localStorage.getItem(LS.model) || preset.model;
+  document.getElementById('llm_model').value = localStorage.getItem(LS.model) || '';
 
-  if (remember) {
-    const key = localStorage.getItem(LS.key);
-    if (key) {
-      document.getElementById('llm_api_key').value = key;
-      markKeySet();
-      showSearchPanel(true);
-    }
-  }
-  if (!document.getElementById('llm_api_key').value) {
-    const ephemeral = sessionStorage.getItem(LS.key);
-    if (ephemeral) {
-      document.getElementById('llm_api_key').value = ephemeral;
-      markKeySet();
-      showSearchPanel(true);
-    }
+  const stored = remember ? localStorage.getItem(LS.key) : sessionStorage.getItem(LS.key);
+  if (stored) {
+    document.getElementById('llm_api_key').value = stored;
+    markKeySet();
+    showSearchPanel(true);
   }
 
   try {
@@ -438,8 +671,7 @@ function restoreLocalState() {
     if (inputs.criteria) document.getElementById('criteria').value = inputs.criteria;
   } catch (_) {}
 
-  const hasKey = !!currentKey();
-  showSearchPanel(hasKey || !!config.has_server_key);
+  showSearchPanel(!!currentKey() || !!config.has_server_key);
 }
 
 function showSearchPanel(show) {
@@ -457,13 +689,20 @@ function saveKey() {
   const key = document.getElementById('llm_api_key').value.trim();
   const preset = PROVIDERS[activeProvider] || PROVIDERS.custom;
   let base = document.getElementById('llm_base_url').value.trim() || preset.base;
-  let model = document.getElementById('llm_model').value.trim() || preset.model;
+  let model = document.getElementById('llm_model').value.trim();
 
   if (!key) return setStatus('Paste your API key first — every scan needs one.', true);
-  if (!base || !model) return setStatus('Base URL and model name are required.', true);
+  if (!base) return setStatus('Base URL is required.', true);
+  if (!model) {
+    if (loadedModels.length) {
+      model = loadedModels[0];
+      document.getElementById('llm_model').value = model;
+    } else {
+      return setStatus('Press "Load models" and pick one, or type a model name.', true);
+    }
+  }
 
   document.getElementById('llm_base_url').value = base;
-  document.getElementById('llm_model').value = model;
 
   const remember = document.getElementById('remember_key').checked;
   localStorage.setItem(LS.remember, remember ? '1' : '0');
@@ -486,7 +725,7 @@ function saveKey() {
 
 function markKeySet() {
   const el = document.getElementById('key-state');
-  el.textContent = config.has_server_key ? 'server key' : 'key set';
+  el.textContent = config.has_server_key && !currentKey() ? 'server key' : 'key set';
   el.classList.add('ok');
   updateActiveProvider();
 }
@@ -513,10 +752,7 @@ function updateActiveProvider() {
 function toggleKeyPanel() {
   const keyVisible = document.getElementById('key-panel').style.display !== 'none';
   showSearchPanel(keyVisible);
-  // Re-open the how-to + base URL so "change key" is never a dead end,
-  // even after the panel was collapsed.
   document.getElementById('howto').style.display = '';
-  document.getElementById('advanced').open = true;
 }
 
 /* --------------------------------------------------------------- providers */
@@ -541,43 +777,133 @@ function selectProvider(id, opts) {
     link.style.display = 'none';
   }
 
-  document.getElementById('howto-steps').textContent = '';
+  const ol = document.getElementById('howto-steps');
+  ol.textContent = '';
   (preset.steps || []).forEach(function (step) {
     const li = document.createElement('li');
     li.textContent = step;
-    document.getElementById('howto-steps').appendChild(li);
+    ol.appendChild(li);
   });
   document.getElementById('howto-note').textContent = preset.note || '';
-
-  const dl = document.getElementById('model-suggestions');
-  dl.textContent = '';
-  (preset.models || []).forEach(function (m) {
-    const opt = document.createElement('option');
-    opt.value = m;
-    dl.appendChild(opt);
-  });
 
   const baseEl = document.getElementById('llm_base_url');
   const modelEl = document.getElementById('llm_model');
   if (id === 'custom') {
-    if (!opts.keepEntry) {
-      baseEl.value = '';
-      modelEl.value = '';
-    }
+    if (!opts.keepEntry) { baseEl.value = ''; modelEl.value = ''; }
     baseEl.placeholder = 'https://your-provider.example/v1';
-    modelEl.placeholder = 'model-name';
+    modelEl.placeholder = 'type the model name';
   } else {
     baseEl.value = preset.base;
-    modelEl.value = preset.model;
     baseEl.placeholder = preset.base;
-    modelEl.placeholder = preset.model;
+    modelEl.value = '';
+    modelEl.placeholder = 'press "Load models"';
   }
 
   document.getElementById('base-url-hint').textContent = preset.base
     ? 'Auto-filled for ' + preset.label + '. Change it only if your provider needs something different.'
     : 'Required for a custom provider — the OpenAI-compatible base, usually ending in /v1.';
 
+  // reset any previous list
+  loadedModels = [];
+  document.getElementById('model-list').classList.remove('show');
+  const sugg = (preset.suggested && preset.suggested.length)
+    ? 'Known good names to try: ' + preset.suggested.slice(0, 3).join(', ') + '.'
+    : 'Load the list, or type the model name.';
+  setModelsStatus(sugg, false);
+
   updateActiveProvider();
+}
+
+function setModelsStatus(text, isError, busy) {
+  const el = document.getElementById('models-status');
+  el.textContent = '';
+  el.classList.toggle('err', !!isError);
+  if (busy) {
+    const spin = document.createElement('span');
+    spin.className = 'mini-spin';
+    el.appendChild(spin);
+  }
+  el.appendChild(document.createTextNode(text || ''));
+}
+
+/* --------------------------------------------------------- live model list */
+async function loadModels() {
+  const key = document.getElementById('llm_api_key').value.trim();
+  const base = document.getElementById('llm_base_url').value.trim() || (PROVIDERS[activeProvider] || {}).base;
+  if (!base) return setModelsStatus('Fill in the Base URL first (Advanced).', true);
+  if (!key) return setModelsStatus('Paste your API key first, then load models.', true);
+
+  const btn = document.getElementById('load-models-btn');
+  btn.disabled = true;
+  setModelsStatus('Asking ' + (PROVIDERS[activeProvider] || {}).label + ' which models this key can use…', false, true);
+
+  try {
+    const res = await fetch('/models', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ llm_base_url: base, llm_api_key: key })
+    });
+    const data = await res.json().catch(function () { return {}; });
+    if (!res.ok) {
+      setModelsStatus(data.detail || 'Could not load models.', true);
+      document.getElementById('model-list').classList.remove('show');
+      return;
+    }
+    loadedModels = data.models || [];
+    if (!loadedModels.length) {
+      setModelsStatus('The provider returned no models. Type the name manually.', true);
+      return;
+    }
+    renderModelList(loadedModels);
+    setModelsStatus(
+      '✓ Key works — ' + loadedModels.length + ' model(s) available right now.' +
+      (data.note ? ' ' + data.note : ''),
+      false
+    );
+    // pre-select the first (best-ranked) model so saving is one click
+    document.getElementById('llm_model').value = loadedModels[0];
+    updateActiveProvider();
+  } catch (e) {
+    setModelsStatus('Network error while loading models: ' + e.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function renderModelList(models) {
+  const wrap = document.getElementById('model-list-inner');
+  wrap.textContent = '';
+  models.forEach(function (id, i) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'model-opt';
+
+    const name = document.createElement('span');
+    name.className = 'm-name';
+    name.textContent = id;
+    btn.appendChild(name);
+
+    if (i === 0) {
+      const tag = document.createElement('span');
+      tag.className = 'm-tag';
+      tag.textContent = 'Suggested';
+      btn.appendChild(tag);
+    } else if (/lite|8b|20b/.test(id)) {
+      const tag = document.createElement('span');
+      tag.className = 'm-tag free';
+      tag.textContent = 'Light';
+      btn.appendChild(tag);
+    }
+
+    btn.addEventListener('click', function () {
+      document.getElementById('llm_model').value = id;
+      document.getElementById('model-list').classList.remove('show');
+      setModelsStatus('Selected ' + id + '. Press "Save key & continue".', false);
+      updateActiveProvider();
+    });
+    wrap.appendChild(btn);
+  });
+  document.getElementById('model-list').classList.add('show');
 }
 
 /* ------------------------------------------------------------------ cursor */
@@ -588,8 +914,8 @@ function refreshCursorHint() {
     el.textContent = 'No saved scan position on this device yet — the next scan starts from the date above.';
     return;
   }
-  const when = new Date(cursor.oldest_date).toLocaleString();
-  el.textContent = 'Last scan covered back to ' + when + ' (' + cursor.count + ' posts). "Continue" scans backwards from there.';
+  el.textContent = 'Last scan covered back to ' + new Date(cursor.oldest_date).toLocaleString() +
+    ' (' + cursor.count + ' posts). "Continue" scans backwards from there.';
 }
 
 function getCursor() {
@@ -597,9 +923,8 @@ function getCursor() {
 }
 
 function applyCursorChoice() {
-  const mode = document.getElementById('resume').value;
   const cursor = getCursor();
-  if (mode === 'cursor' && cursor) {
+  if (document.getElementById('resume').value === 'cursor' && cursor) {
     const d = new Date(cursor.oldest_date);
     d.setUTCDate(d.getUTCDate() - 1);
     document.getElementById('since').value = d.toISOString().slice(0, 10);
@@ -624,18 +949,17 @@ function updatePlan() {
       if (!res.ok) { box.classList.remove('show'); return; }
       const p = await res.json();
       box.textContent = '';
-      const b1 = document.createElement('b');
-      b1.textContent = p.span;
       box.appendChild(document.createTextNode('This scan covers '));
-      box.appendChild(b1);
-      box.appendChild(document.createTextNode(' in ' + p.window_count + ' window(s) of 14 days. Up to ' +
-        p.max_posts + ' posts, about ' + p.max_batches + ' AI calls, usually a few minutes.'));
-      const br = document.createElement('br');
-      box.appendChild(br);
+      const b = document.createElement('b');
+      b.textContent = p.span;
+      box.appendChild(b);
+      box.appendChild(document.createTextNode(' in ' + p.window_count + ' window(s) of 14 days · up to ' +
+        p.max_posts + ' posts · about ' + p.max_batches + ' AI calls.'));
+      box.appendChild(document.createElement('br'));
       box.appendChild(document.createTextNode('Windows: ' + p.windows.map(function (w) { return w.label; }).join(' · ')));
       if (p.clamped) {
         box.appendChild(document.createElement('br'));
-        box.appendChild(document.createTextNode('Note: older dates are capped to the last ' +
+        box.appendChild(document.createTextNode('Older dates are capped to the last ' +
           (config.max_lookback_days || 120) + ' days.'));
       }
       box.classList.add('show');
@@ -670,7 +994,7 @@ async function runSearch() {
   btn.textContent = 'Scanning…';
   setStatus('');
   document.getElementById('progress-wrap').classList.add('show');
-  setProgress('Starting…', 0, '');
+  setProgress('Starting…', 0, '', true);
   document.getElementById('cancel-btn').style.display = '';
 
   try {
@@ -723,17 +1047,17 @@ function poll() {
 }
 
 function renderJob(job) {
-  const stageNames = {
-    queued: 'Queued', planning: 'Planning the date range',
-    fetching: 'Reading Telegram', classifying: 'Classifying posts',
-    done: 'Done', error: 'Error', cancelled: 'Cancelled'
+  const names = {
+    queued: 'Queued', planning: 'Planning the date range', fetching: 'Reading Telegram',
+    classifying: 'Classifying posts', done: 'Done', error: 'Error', cancelled: 'Cancelled'
   };
-  const stage = stageNames[job.stage] || job.stage;
+  const stage = names[job.stage] || job.stage;
 
   const winPart = job.windows_total ? (job.windows_done / job.windows_total) * 40 : 0;
   const batchPart = job.batches_total
     ? ((job.batches_done + job.batches_failed) / job.batches_total) * 60 : 0;
   const pct = job.stage === 'done' ? 100 : Math.min(99, winPart + batchPart);
+  const indeterminate = !job.done && pct < 3;
 
   let right = '';
   if (job.stage === 'classifying' && job.batches_total) {
@@ -745,12 +1069,14 @@ function renderJob(job) {
   }
 
   const line = (job.done && job.message) ? job.message : (stage + ' — ' + (job.message || ''));
-  setProgress(line, pct, right);
+  setProgress(line, pct, right, indeterminate);
 
   document.getElementById('stat-scanned').textContent = job.posts_scanned || job.posts_fetched || 0;
   document.getElementById('stat-matched').textContent = (job.results || []).length;
   toggleStat('stat-expired-box', job.expired_count > 0, job.expired_count);
-  toggleStat('stat-dupes-box', job.duplicates_removed > 0, job.duplicates_removed);
+  const dupBox = document.getElementById('stat-dupes').parentElement;
+  dupBox.style.display = job.duplicates_removed > 0 ? 'block' : 'none';
+  if (job.duplicates_removed > 0) document.getElementById('stat-dupes').textContent = job.duplicates_removed;
   toggleStat('stat-failed-box', job.batches_failed > 0, job.batches_failed);
   document.getElementById('stats').style.display = 'flex';
 
@@ -834,7 +1160,7 @@ function renderResults(results) {
 
   results.forEach(function (m, i) {
     const card = document.createElement('div');
-    card.className = 'result';
+    card.className = 'result ' + (m.status === 'high' ? 'is-high' : 'is-medium');
 
     const top = document.createElement('div');
     top.className = 'result-top';
@@ -851,9 +1177,9 @@ function renderResults(results) {
     reason.className = 'result-reason';
     reason.textContent = m.reason || '';
 
-    const text = (m.text || '');
-    const isLong = text.length > 260;
-    const shortText = isLong ? text.slice(0, 260) + '…' : text;
+    const text = m.text || '';
+    const isLong = text.length > 300;
+    const shortText = isLong ? text.slice(0, 300) + '…' : text;
     const textEl = document.createElement('div');
     textEl.className = 'result-text';
     textEl.id = 'text-' + i;
@@ -869,6 +1195,7 @@ function renderResults(results) {
       toggle.addEventListener('click', function () {
         expanded = !expanded;
         textEl.textContent = expanded ? text : shortText;
+        textEl.classList.toggle('expanded', expanded);
         toggle.textContent = expanded ? 'Show less' : 'Show full text';
       });
       actions.appendChild(toggle);
@@ -890,9 +1217,19 @@ function renderResults(results) {
 }
 
 /* ------------------------------------------------------------------- utils */
-function setProgress(text, pct, right) {
-  document.getElementById('stage-line').textContent = text;
-  document.getElementById('progress-bar').style.width = Math.max(2, Math.min(100, pct)) + '%';
+function setProgress(text, pct, right, indeterminate) {
+  const line = document.getElementById('stage-line');
+  line.textContent = '';
+  if (indeterminate) {
+    const dot = document.createElement('span');
+    dot.className = 'spinner-dot';
+    line.appendChild(dot);
+  }
+  line.appendChild(document.createTextNode(text));
+
+  const bar = document.getElementById('progress-bar');
+  bar.classList.toggle('indeterminate', !!indeterminate);
+  if (!indeterminate) bar.style.width = Math.max(2, Math.min(100, pct)) + '%';
   document.getElementById('progress-left').textContent = right || '—';
 }
 

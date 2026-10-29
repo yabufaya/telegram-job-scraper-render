@@ -222,3 +222,92 @@ def _friendly_http_error(status: int, body: str) -> str:
     if status == 429:
         return "Rate limited (429) by the LLM provider even after retries. Wait a minute or lower concurrency."
     return f"LLM provider error {status}: {body[:200]}"
+
+
+# --------------------------------------------------------------------------- #
+# Live model discovery
+# --------------------------------------------------------------------------- #
+# Model names go stale fast: gemini-2.5-flash was retired 20 Oct 2026, and
+# Groq's Llama models moved to enterprise-only. Rather than ship a list that
+# rots, ask the provider what it currently serves (GET {base}/models).
+_NOT_CHAT_MODEL_HINTS = (
+    "embedding", "embed", "imagen", "veo", "tts", "whisper",
+    "image", "audio", "live", "native-audio", "computer-use",
+    "prompt-guard", "guard", "rerank", "moderation", "aqa",
+)
+
+_PREFERRED_ORDER = (
+    "flash-lite", "flash", "gpt-oss-20b", "gpt-oss-120b",
+    "llama-3.1-8b", "qwen", "llama", "kimi", "compound",
+    "pro", "argon",
+)
+
+
+def _looks_like_chat_model(model_id: str) -> bool:
+    low = model_id.lower()
+    return not any(hint in low for hint in _NOT_CHAT_MODEL_HINTS)
+
+
+def _rank(model_id: str) -> tuple[int, str]:
+    low = model_id.lower()
+    for idx, needle in enumerate(_PREFERRED_ORDER):
+        if needle in low:
+            return idx, low
+    return len(_PREFERRED_ORDER), low
+
+
+async def fetch_models(base_url: str, api_key: str, limit: int = 40) -> dict:
+    """Return the model IDs this key can actually use right now.
+
+    Returns {"models": [...], "total": n, "note": "..."}.
+    Raises LLMError with a friendly message when the key or URL is wrong —
+    which doubles as key validation before the user spends a scan.
+    """
+    url = f"{base_url.rstrip('/')}/models"
+    headers = {"Authorization": f"Bearer {api_key}"}
+    try:
+        async with httpx.AsyncClient(timeout=25) as http:
+            resp = await http.get(url, headers=headers)
+    except httpx.HTTPError as exc:
+        raise LLMError(f"Could not reach the provider to list models: {exc}") from exc
+
+    if resp.status_code in (401, 403):
+        raise LLMError("That key was rejected when listing models (401/403). Check you pasted it fully and that it belongs to this provider.")
+    if resp.status_code == 404:
+        raise LLMError("This provider has no /models endpoint at that base URL. Type the model name manually.")
+
+    if resp.status_code >= 400:
+        raise LLMError(f"The provider returned {resp.status_code} when listing models.")
+
+    try:
+        payload = resp.json()
+    except ValueError as exc:
+        raise LLMError("The provider did not return JSON for the model list.") from exc
+
+    raw = payload.get("data") if isinstance(payload, dict) else payload
+    if not isinstance(raw, list):
+        raise LLMError("Unexpected model-list format from the provider.")
+
+    ids: list[str] = []
+    for entry in raw:
+        if isinstance(entry, dict):
+            mid = entry.get("id") or entry.get("name")
+        else:
+            mid = entry
+        if not isinstance(mid, str):
+            continue
+        mid = mid.removeprefix("models/").strip()
+        if mid and mid not in ids:
+            ids.append(mid)
+
+    chat_models = [m for m in ids if _looks_like_chat_model(m)]
+    chosen = chat_models or ids
+    chosen.sort(key=_rank)
+
+    note = ""
+    if not chat_models and ids:
+        note = "Only non-chat models were returned; showing everything."
+    if len(chosen) > limit:
+        note = f"Showing the {limit} most relevant of {len(chosen)} models."
+
+    return {"models": chosen[:limit], "total": len(chosen), "note": note}

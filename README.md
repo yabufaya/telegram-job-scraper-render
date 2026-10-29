@@ -16,7 +16,11 @@ Channel ──► fetch ──► dedupe ──► windows ──► batches ─
 ## Live demo checklist (what a visitor experiences)
 
 1. Opens the URL → server wakes (free tier) → "Your LLM API key" panel.
-2. Picks a provider preset, pastes **their** key → saved in *their* browser only.
+2. Picks a provider (Google AI Studio / Groq / Custom), pastes **their** key,
+   then presses **Load models** — the app asks the provider which models that
+   key can use *right now* and shows a picker. This matters because model names
+   are retired constantly: `gemini-2.5-flash` was shut down on 20 Oct 2026 and
+   Groq's Llama models moved to enterprise-only. Nothing is hardcoded.
 3. Types `@ethio_jobs`, their profile, a start date → the page shows the scan plan.
 4. Watches real progress: `Reading 12 Oct → 26 Oct…` then `Classifying… 7/21 batches`.
 5. Gets cards with **Strong / Possible** badges, the model's reason, full text, and
@@ -186,6 +190,7 @@ Typical scan (Gemini Flash): 200 posts ≈ 14 batches ≈ **$0.05–0.10** on th
 | `GET` | `/` | the UI |
 | `GET` | `/health` | liveness + config summary (**no secrets**) — use as health check |
 | `GET` | `/config` | non-secret defaults; returns `has_server_key` boolean, never the key |
+| `POST` | `/models` | live model list for a given key + base URL (also validates the key) |
 | `POST` | `/plan` | dry run: windows, span and batch estimate for a date → free |
 | `POST` | `/search` | validate → returns `{job_id}` immediately (no long request) |
 | `GET` | `/search/{job_id}` | `{stage, windows_done, batches_done, results[], cursor, …}` |
@@ -264,7 +269,7 @@ app/llm_adapter.py   OpenAI-compatible client, retries, JSON repair, error mappi
 app/jobs.py          in-memory jobs, the scan runner, progress, cancellation
 app/security.py      URL/SSRF validation, rate limiter, concurrency gate
 app/main.py          routes + credential enforcement
-static/index.html    single-page UI, no build step
+static/index.html    single-page UI, no build step, light/dark/system themes
 scripts/make_session.py  one-time StringSession generator (local only)
 tests/               20 unit tests + mock provider
 render.yaml, Dockerfile, runtime.txt

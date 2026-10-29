@@ -30,6 +30,7 @@ from pydantic import BaseModel, Field
 from app.config import settings
 from app.headers import SecurityHeadersMiddleware
 from app.jobs import describe_plan, run_scan, store
+from app.llm_adapter import LLMError, fetch_models
 from app.security import (
     ConcurrencyGate,
     RateLimiter,
@@ -61,6 +62,10 @@ limiter = RateLimiter(
 )
 gate = ConcurrencyGate(settings.global_concurrency)
 
+# Model listing is cheap but calls an external API: give it its own generous
+# bucket so it never eats into the scan quota.
+_model_probe = RateLimiter(per_hour=60, per_ip_concurrency=2)
+
 STARTED_AT = time.time()
 
 
@@ -70,6 +75,11 @@ STARTED_AT = time.time()
 class PlanRequest(BaseModel):
     since: str
     tz_offset_minutes: int = 0
+
+
+class ModelsRequest(BaseModel):
+    llm_base_url: str
+    llm_api_key: str
 
 
 class SearchRequest(BaseModel):
@@ -153,6 +163,35 @@ async def plan(req: PlanRequest):
         return describe_plan(req.since, req.tz_offset_minutes)
     except (WindowError, ValidationError) as exc:
         raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/models")
+async def list_models(req: ModelsRequest, request: Request):
+    """Ask the provider which models this key can use *today*.
+
+    Model names are retired constantly, so the UI fetches the real list instead
+    of relying on a hardcoded one. It also validates the key and URL before the
+    user spends a scan on them.
+    """
+    ip = client_ip(request)
+    # Cheap separate limiter so a visitor cannot hammer providers through us.
+    ok, reason = _model_probe.check_and_reserve(ip)
+    if not ok:
+        raise HTTPException(429, reason)
+    try:
+        base_url = validate_llm_base_url(
+            req.llm_base_url, allow_insecure=settings.allow_insecure_llm_urls
+        )
+        api_key = validate_api_key(req.llm_api_key)
+        result = await fetch_models(base_url, api_key)
+        logger.info("Listed %s model(s) for %s", result["total"], ip)
+        return result
+    except ValidationError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except LLMError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    finally:
+        _model_probe.release(ip)
 
 
 @app.post("/search")

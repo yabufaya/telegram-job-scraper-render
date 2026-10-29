@@ -43,6 +43,19 @@ async def completions(request: Request):
     }
 
 
+@app.get("/v1/models")
+async def models():
+    """Pretend to be a provider's live model list (used by tests only)."""
+    return {"data": [
+        {"id": "gemini-3.8-flash"},
+        {"id": "gemini-3.5-flash-lite"},
+        {"id": "gemini-3.1-pro-preview"},
+        {"id": "text-embedding-005"},
+        {"id": "imagen-4"},
+        {"id": "gemini-3.1-flash-image"},
+    ]}
+
+
 if __name__ == "__main__":
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8777
     uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
