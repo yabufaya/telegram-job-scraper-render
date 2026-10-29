@@ -5,6 +5,7 @@ services:
     name: job-radar
     runtime: python
     plan: free              # change to "starter" ($7/mo) for always-on, no cold starts
+                            # NOTE: free instances sleep after 15 min idle (~60s wake)
     region: frankfurt       # closest to Ethiopia/Europe; use "oregon" for US
     branch: main
     buildCommand: pip install -r requirements.txt
