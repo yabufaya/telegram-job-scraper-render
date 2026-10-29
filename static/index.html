@@ -1,0 +1,920 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Job Radar — Telegram Job Filter</title>
+<style>
+  :root {
+    --bg: #eef0f2; --panel: #ffffff; --panel-raised: #f4f5f7; --border: #dcdfe3;
+    --text: #1c1f23; --text-dim: #656b73;
+    --accent: #1f9d6e; --accent-dim: #cdeee0;
+    --accent-medium: #b5760a; --accent-medium-dim: #f3e3c6;
+    --accent-contrast: #ffffff; --danger: #c8382c; --danger-dim: #f6d9d6;
+    --radius: 10px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1b1d20; --panel: #242629; --panel-raised: #2c2e32; --border: #383b40;
+      --text: #eceeef; --text-dim: #9a9fa6;
+      --accent: #35d499; --accent-dim: #1d5c46;
+      --accent-medium: #e8a33d; --accent-medium-dim: #4a3a1a;
+      --accent-contrast: #05261b; --danger: #e2574c; --danger-dim: #4a2420;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg); color: var(--text);
+    max-width: 780px; margin: 0 auto; padding: 44px 20px 80px; line-height: 1.5;
+  }
+  header { margin-bottom: 26px; }
+  header h1 { font-size: 1.65rem; font-weight: 650; margin: 0 0 6px; letter-spacing: -0.01em; }
+  header p { color: var(--text-dim); margin: 0; font-size: 0.95rem; max-width: 56ch; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 22px; }
+  .panel + .panel { margin-top: 16px; }
+  .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .panel-head h2 { font-size: 0.95rem; margin: 0; font-weight: 650; }
+  label { display: block; font-size: 0.85rem; font-weight: 600; color: var(--text-dim); margin-top: 16px; margin-bottom: 6px; }
+  label:first-of-type { margin-top: 0; }
+  input, textarea, select {
+    width: 100%; background: var(--panel-raised); border: 1px solid var(--border);
+    color: var(--text); padding: 10px 12px; border-radius: 8px; font-size: 0.95rem; font-family: inherit;
+  }
+  input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); }
+  textarea { resize: vertical; min-height: 62px; }
+  .row-split { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; }
+  .row-split > div { flex: 1; min-width: 160px; }
+  .hint { font-size: 0.78rem; color: var(--text-dim); margin-top: 6px; line-height: 1.45; }
+  .badge-state { font-size: 0.72rem; font-weight: 700; padding: 3px 9px; border-radius: 999px; background: var(--danger-dim); color: var(--danger); }
+  .badge-state.ok { background: var(--accent-dim); color: var(--accent); }
+  button { font-family: inherit; }
+  button.primary {
+    margin-top: 20px; width: 100%; padding: 12px 20px; font-size: 1rem; font-weight: 600;
+    border: none; border-radius: 8px; background: var(--accent); color: var(--accent-contrast);
+    cursor: pointer; transition: filter .15s ease;
+  }
+  button.primary:hover { filter: brightness(1.08); }
+  button.primary:disabled { opacity: .55; cursor: default; filter: none; }
+  button.small, a.small-link {
+    font-size: 0.82rem; padding: 6px 12px; border-radius: 7px; border: 1px solid var(--border);
+    background: transparent; color: var(--text); cursor: pointer; text-decoration: none;
+    display: inline-block;
+  }
+  button.small:hover, a.small-link:hover { border-color: var(--text-dim); }
+  button.danger { border-color: var(--danger); color: var(--danger); }
+  details { margin-top: 16px; }
+  details summary { cursor: pointer; font-size: 0.85rem; color: var(--text-dim); user-select: none; }
+  details summary:hover { color: var(--text); }
+  details > label:first-of-type { margin-top: 14px; }
+  #status-line { margin-top: 14px; font-size: 0.88rem; color: var(--text-dim); min-height: 1.2em; }
+  #status-line.is-error { color: var(--danger); }
+  .stats { display: flex; gap: 10px; margin-top: 18px; flex-wrap: wrap; }
+  .stat { flex: 1; min-width: 110px; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 13px 15px; }
+  .stat .num { font-size: 1.4rem; font-weight: 650; line-height: 1; }
+  .stat .label { font-size: 0.76rem; color: var(--text-dim); margin-top: 4px; }
+  .stat.matched .num { color: var(--accent); }
+  .stat.expired .num { color: var(--text-dim); }
+  .stat.failed .num { color: var(--danger); }
+  .warnings { margin-top: 14px; padding: 12px 14px; border: 1px solid var(--danger); background: var(--danger-dim); border-radius: var(--radius); font-size: 0.84rem; }
+  .warnings b { color: var(--danger); }
+  .results { margin-top: 16px; display: flex; flex-direction: column; gap: 10px; }
+  .result { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; }
+  .result-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .badge { display: inline-flex; align-items: center; gap: 6px; font-size: 0.78rem; font-weight: 600; padding: 3px 9px; border-radius: 999px; }
+  .badge::before { content: ''; width: 6px; height: 6px; border-radius: 50%; }
+  .badge.high { background: var(--accent-dim); color: var(--accent); }
+  .badge.high::before { background: var(--accent); }
+  .badge.medium { background: var(--accent-medium-dim); color: var(--accent-medium); }
+  .badge.medium::before { background: var(--accent-medium); }
+  .result-date { font-size: 0.78rem; color: var(--text-dim); }
+  .result-reason { font-size: 0.85rem; color: var(--text-dim); margin-top: 8px; }
+  .result-text { font-size: 0.92rem; margin-top: 10px; white-space: pre-wrap; }
+  .result-actions { margin-top: 12px; display: flex; gap: 10px; flex-wrap: wrap; }
+  .btn-solid { font-size: 0.85rem; padding: 7px 14px; border-radius: 7px; cursor: pointer; text-decoration: none; border: none; background: var(--accent); color: var(--accent-contrast); font-weight: 600; }
+  .btn-solid:hover { filter: brightness(1.08); }
+  .empty-state { margin-top: 16px; padding: 22px; text-align: center; color: var(--text-dim); border: 1px dashed var(--border); border-radius: var(--radius); font-size: 0.9rem; }
+  .progress-wrap { margin-top: 16px; display: none; }
+  .progress-wrap.show { display: block; }
+  .bar { height: 7px; background: var(--panel-raised); border: 1px solid var(--border); border-radius: 999px; overflow: hidden; }
+  .bar > i { display: block; height: 100%; width: 0%; background: var(--accent); transition: width .35s ease; }
+  .progress-meta { display: flex; justify-content: space-between; font-size: 0.8rem; color: var(--text-dim); margin-top: 8px; gap: 10px; align-items: center; }
+  .stage-line { font-size: 0.88rem; margin-bottom: 8px; }
+  .plan-box { margin-top: 14px; font-size: 0.83rem; color: var(--text-dim); background: var(--panel-raised); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; display: none; }
+  .plan-box.show { display: block; }
+  .plan-box b { color: var(--text); }
+  #boot-overlay {
+    position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center;
+    justify-content: center; flex-direction: column; gap: 14px; z-index: 50; text-align: center; padding: 24px;
+  }
+  #boot-overlay.hide { display: none; }
+  .spinner { width: 26px; height: 26px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .key-warn { font-size: 0.78rem; color: var(--text-dim); margin-top: 8px; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.82em; background: var(--panel-raised); padding: 1px 5px; border-radius: 4px; }
+
+  .provider-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 16px; }
+  @media (max-width: 620px) { .provider-cards { grid-template-columns: 1fr; } }
+  .pcard {
+    position: relative; text-align: left; cursor: pointer; font-family: inherit;
+    background: var(--panel-raised); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 12px 13px; color: var(--text);
+    display: flex; flex-direction: column; gap: 4px;
+    transition: border-color .15s ease, background .15s ease;
+  }
+  .pcard:hover { border-color: var(--text-dim); }
+  .pcard.is-active { border-color: var(--accent); background: var(--panel); box-shadow: inset 0 0 0 1px var(--accent); }
+  .pcard-top { font-size: 0.9rem; font-weight: 650; display: flex; align-items: center; gap: 7px; }
+  .pcard-dot { width: 9px; height: 9px; border-radius: 50%; border: 2px solid var(--border); background: transparent; flex: none; }
+  .pcard.is-active .pcard-dot { border-color: var(--accent); background: var(--accent); }
+  .pcard-sub { font-size: 0.76rem; color: var(--text-dim); line-height: 1.4; }
+  .pcard-tag {
+    align-self: flex-start; margin-top: 5px; font-size: 0.66rem; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .04em; padding: 2px 7px; border-radius: 999px;
+    background: var(--accent-dim); color: var(--accent);
+  }
+  .pcard[data-provider="custom"] .pcard-tag { background: var(--panel-raised); color: var(--text-dim); border: 1px solid var(--border); }
+
+  .howto {
+    margin-top: 14px; padding: 14px 16px; border: 1px dashed var(--border);
+    border-radius: var(--radius); background: var(--panel-raised);
+  }
+  .howto-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .howto-head span { font-size: 0.86rem; font-weight: 650; }
+  .howto ol { margin: 10px 0 0; padding-left: 20px; font-size: 0.82rem; color: var(--text-dim); line-height: 1.65; }
+  .howto ol li { margin-bottom: 2px; }
+  .howto code { font-size: 0.78rem; }
+
+  @media (prefers-reduced-motion: no-preference) { .result { animation: rise .2s ease both; } }
+  @keyframes rise { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+</style>
+</head>
+<body>
+
+<div id="boot-overlay">
+  <div class="spinner"></div>
+  <div><b>Waking the server…</b></div>
+  <div class="hint" style="max-width:34ch">Free hosts sleep after 15 minutes idle. This first load can take up to a minute.</div>
+</div>
+
+<header>
+  <h1>Job Radar</h1>
+  <p>Reads a public Telegram job channel, skips posts past their deadline, and shows only what matches your profile. Free to use — the AI runs on your own free API key.</p>
+</header>
+
+<!-- ============ STEP 1: key ============ -->
+<div class="panel" id="key-panel">
+  <div class="panel-head">
+    <h2>1 · Connect your AI account</h2>
+    <span class="badge-state" id="key-state">not set</span>
+  </div>
+  <p class="hint" style="margin-top:10px">
+    Job Radar is free — but the AI work runs on <b>your own</b> free API key, so this site never
+    pays for your searches. Your key is saved in this browser only and sent with your scans; it is
+    never written to the server, never logged, and never shared.
+  </p>
+
+  <div class="provider-cards" role="group" aria-label="Choose your AI provider">
+    <button type="button" class="pcard is-active" data-provider="gemini" aria-pressed="true">
+      <span class="pcard-top"><span class="pcard-dot"></span>Google AI Studio</span>
+      <span class="pcard-sub">Gemini · generous free tier<br>No credit card</span>
+      <span class="pcard-tag">Recommended</span>
+    </button>
+    <button type="button" class="pcard" data-provider="groq" aria-pressed="false">
+      <span class="pcard-top"><span class="pcard-dot"></span>Groq</span>
+      <span class="pcard-sub">Llama / GPT-OSS · very fast<br>No credit card</span>
+      <span class="pcard-tag">Fastest</span>
+    </button>
+    <button type="button" class="pcard" data-provider="custom" aria-pressed="false">
+      <span class="pcard-top"><span class="pcard-dot"></span>Custom / other</span>
+      <span class="pcard-sub">Any OpenAI-compatible<br>endpoint + your own URL</span>
+      <span class="pcard-tag">Advanced</span>
+    </button>
+  </div>
+
+  <div class="howto" id="howto">
+    <div class="howto-head">
+      <span id="howto-title">Get your free Gemini key</span>
+      <a id="howto-link" class="small-link" href="https://aistudio.google.com/app/apikey"
+         target="_blank" rel="noopener noreferrer">Open AI Studio ↗</a>
+    </div>
+    <ol id="howto-steps"></ol>
+    <div class="hint" id="howto-note" style="margin-top:8px"></div>
+  </div>
+
+  <label for="llm_model">Model</label>
+  <input id="llm_model" placeholder="gemini-2.5-flash" list="model-suggestions">
+  <datalist id="model-suggestions"></datalist>
+
+  <label for="llm_api_key">API key</label>
+  <input id="llm_api_key" type="password" autocomplete="off" placeholder="paste your key here">
+  <div class="key-warn">&#128274; Paste it only on this site. Keys are not checked until your first scan.</div>
+
+  <details id="advanced">
+    <summary>Advanced: base URL &amp; options</summary>
+    <label for="llm_base_url">Base URL <span style="font-weight:400">(auto-filled from your choice)</span></label>
+    <input id="llm_base_url" placeholder="https://generativelanguage.googleapis.com/v1beta/openai">
+    <div class="hint" id="base-url-hint"></div>
+    <label style="display:flex;align-items:center;gap:8px;font-weight:500">
+      <input type="checkbox" id="remember_key" checked style="width:auto">
+      Remember my key on this device only
+    </label>
+  </details>
+
+  <button class="primary" id="save-key-btn">Save key &amp; continue</button>
+  <div id="status-line"></div>
+</div>
+
+<!-- ============ STEP 2: search ============ -->
+<div class="panel" id="search-panel">
+  <div class="panel-head">
+    <h2>2 · What to scan</h2>
+    <button class="small" id="key-toggle">change key</button>
+  </div>
+  <div class="hint" id="active-provider" style="margin-top:8px"></div>
+
+  <label for="channel">Telegram channel</label>
+  <input id="channel" placeholder="@ethio_job_vacancy1 · or https://t.me/Ethiojobs2000">
+  <div class="hint">Public channels only. Works without any Telegram login for most channels.</div>
+
+  <label for="criteria">What are you looking for</label>
+  <textarea id="criteria" placeholder="Electrical engineering graduate, IT-related roles, 0 years experience, Addis Ababa"></textarea>
+
+  <div class="row-split">
+    <div>
+      <label for="since">Scan from</label>
+      <input id="since" type="date">
+    </div>
+    <div>
+      <label for="resume">Resume</label>
+      <select id="resume">
+        <option value="date">Use the date above</option>
+        <option value="cursor">Continue from my last scan</option>
+      </select>
+    </div>
+  </div>
+  <div class="hint" id="cursor-hint">No saved scan position on this device yet.</div>
+
+  <div class="plan-box" id="plan-box"></div>
+
+  <button class="primary" id="search-btn">Scan channel</button>
+
+  <div class="progress-wrap" id="progress-wrap">
+    <div class="stage-line" id="stage-line">Starting…</div>
+    <div class="bar"><i id="progress-bar"></i></div>
+    <div class="progress-meta">
+      <span id="progress-left">—</span>
+      <button class="small danger" id="cancel-btn">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div class="stats" id="stats" style="display:none">
+  <div class="stat"><div class="num" id="stat-scanned">0</div><div class="label">Posts scanned</div></div>
+  <div class="stat matched"><div class="num" id="stat-matched">0</div><div class="label">Matches</div></div>
+  <div class="stat expired" id="stat-expired-box" style="display:none"><div class="num" id="stat-expired">0</div><div class="label">Expired, skipped</div></div>
+  <div class="stat expired" id="stat-dupes-box" style="display:none"><div class="num" id="stat-dupes">0</div><div class="label">Duplicates dropped</div></div>
+  <div class="stat failed" id="stat-failed-box" style="display:none"><div class="num" id="stat-failed">0</div><div class="label">Batches failed</div></div>
+</div>
+
+<div id="warnings-slot"></div>
+<div class="results" id="results"></div>
+
+<script>
+/* ------------------------------------------------------------------ state */
+const LS = {
+  key: 'jr_llm_key_v2',
+  base: 'jr_llm_base_v2',
+  model: 'jr_llm_model_v2',
+  provider: 'jr_provider_v2',
+  remember: 'jr_remember_v2',
+  cursor: 'jr_cursor_v2',
+  inputs: 'jr_inputs_v2',
+};
+
+/* Three choices, each with its own instructions and links. */
+const PROVIDERS = {
+  gemini: {
+    label: 'Google AI Studio',
+    base: 'https://generativelanguage.googleapis.com/v1beta/openai',
+    model: 'gemini-2.5-flash',
+    models: ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-3-flash', 'gemini-2.5-pro'],
+    keyUrl: 'https://aistudio.google.com/app/apikey',
+    keyUrlLabel: 'Open AI Studio ↗',
+    title: 'Get your free Gemini key (about 2 minutes)',
+    steps: [
+      'Sign in at aistudio.google.com with any Google account.',
+      'Click "Create API key" (or "Get API key") and pick or create a project.',
+      'Copy the key — it starts with AIza…',
+      'Paste it below. No credit card is needed for the free tier.'
+    ],
+    note: 'The free tier is rate-limited per day and resets daily. If you see quota or 429 errors, wait until tomorrow or switch to Groq.'
+  },
+  groq: {
+    label: 'Groq',
+    base: 'https://api.groq.com/openai/v1',
+    model: 'llama-3.3-70b-versatile',
+    models: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'openai/gpt-oss-120b', 'qwen/qwen3.8-27b'],
+    keyUrl: 'https://console.groq.com/keys',
+    keyUrlLabel: 'Open Groq console ↗',
+    title: 'Get your free Groq key (about 1 minute)',
+    steps: [
+      'Sign up at console.groq.com — Google or GitHub login works.',
+      'Open "API Keys", then "Create API Key".',
+      'Copy the key immediately: Groq shows it only once.',
+      'Paste it below. No credit card required.'
+    ],
+    note: 'Groq is very fast but limits tokens per minute on the free tier. If you get 429 errors, scan fewer days at a time.'
+  },
+  custom: {
+    label: 'Custom / other provider',
+    base: '',
+    model: '',
+    models: [],
+    keyUrl: '',
+    keyUrlLabel: '',
+    title: 'Use any OpenAI-compatible provider',
+    steps: [
+      'Open "Advanced" below and fill in the Base URL — it must be an OpenAI-compatible endpoint.',
+      'Examples: https://api.openai.com/v1 · https://openrouter.ai/api/v1 · https://open.bigmodel.cn/api/paas/v4 · your own server.',
+      'Type the exact model name that provider expects.',
+      'Paste that provider\'s key below.'
+    ],
+    note: 'The base URL and the model name must belong to the SAME provider — mixing them is the most common cause of 400 and 404 errors.'
+  },
+};
+
+let currentJobId = null;
+let pollTimer = null;
+let config = {};
+let activeProvider = 'gemini';
+
+/* ------------------------------------------------------------------ boot */
+window.addEventListener('DOMContentLoaded', boot);
+
+function wireEvents() {
+  document.querySelectorAll('.pcard').forEach(function (card) {
+    card.addEventListener('click', function () { selectProvider(card.dataset.provider); });
+  });
+  document.getElementById('save-key-btn').addEventListener('click', saveKey);
+  document.getElementById('key-toggle').addEventListener('click', toggleKeyPanel);
+  document.getElementById('resume').addEventListener('change', applyCursorChoice);
+  document.getElementById('search-btn').addEventListener('click', runSearch);
+  document.getElementById('cancel-btn').addEventListener('click', cancelScan);
+  document.getElementById('since').addEventListener('change', updatePlan);
+}
+
+async function boot() {
+  wireEvents();
+  document.getElementById('since').value = daysAgoISO(14);
+  restoreLocalState();
+  await waitForServer();
+  await loadConfig();
+  document.getElementById('boot-overlay').classList.add('hide');
+  selectProvider(activeProvider, { keepEntry: true });
+  refreshCursorHint();
+  updatePlan();
+}
+
+async function waitForServer(maxWaitMs) {
+  maxWaitMs = maxWaitMs || 75000;
+  const started = Date.now();
+  while (Date.now() - started < maxWaitMs) {
+    try {
+      const res = await fetch('/health', { cache: 'no-store' });
+      if (res.ok) return true;
+    } catch (_) { /* still waking */ }
+    await sleep(2000);
+  }
+  document.querySelector('#boot-overlay .hint').textContent =
+    'The server is taking longer than usual. Keep waiting or reload the page.';
+  return false;
+}
+
+async function loadConfig() {
+  try {
+    const res = await fetch('/config');
+    config = await res.json();
+  } catch (_) {
+    config = {};
+  }
+  if (config.has_server_key) {
+    document.getElementById('key-state').textContent = 'server key available';
+    document.getElementById('key-state').classList.add('ok');
+    showSearchPanel(true);
+  }
+}
+
+/* ------------------------------------------------------------- local state */
+function restoreLocalState() {
+  const remember = localStorage.getItem(LS.remember) !== '0';
+  document.getElementById('remember_key').checked = remember;
+
+  activeProvider = localStorage.getItem(LS.provider) || 'gemini';
+  const preset = PROVIDERS[activeProvider] || PROVIDERS.gemini;
+  document.getElementById('llm_base_url').value = localStorage.getItem(LS.base) || preset.base;
+  document.getElementById('llm_model').value = localStorage.getItem(LS.model) || preset.model;
+
+  if (remember) {
+    const key = localStorage.getItem(LS.key);
+    if (key) {
+      document.getElementById('llm_api_key').value = key;
+      markKeySet();
+      showSearchPanel(true);
+    }
+  }
+  if (!document.getElementById('llm_api_key').value) {
+    const ephemeral = sessionStorage.getItem(LS.key);
+    if (ephemeral) {
+      document.getElementById('llm_api_key').value = ephemeral;
+      markKeySet();
+      showSearchPanel(true);
+    }
+  }
+
+  try {
+    const inputs = JSON.parse(localStorage.getItem(LS.inputs) || '{}');
+    if (inputs.channel) document.getElementById('channel').value = inputs.channel;
+    if (inputs.criteria) document.getElementById('criteria').value = inputs.criteria;
+  } catch (_) {}
+
+  const hasKey = !!currentKey();
+  showSearchPanel(hasKey || !!config.has_server_key);
+}
+
+function showSearchPanel(show) {
+  document.getElementById('key-panel').style.display = show ? 'none' : '';
+  document.getElementById('search-panel').style.display = show ? '' : 'none';
+}
+
+function currentKey() {
+  const typed = document.getElementById('llm_api_key').value.trim();
+  if (typed) return typed;
+  return localStorage.getItem(LS.key) || sessionStorage.getItem(LS.key) || '';
+}
+
+function saveKey() {
+  const key = document.getElementById('llm_api_key').value.trim();
+  const preset = PROVIDERS[activeProvider] || PROVIDERS.custom;
+  let base = document.getElementById('llm_base_url').value.trim() || preset.base;
+  let model = document.getElementById('llm_model').value.trim() || preset.model;
+
+  if (!key) return setStatus('Paste your API key first — every scan needs one.', true);
+  if (!base || !model) return setStatus('Base URL and model name are required.', true);
+
+  document.getElementById('llm_base_url').value = base;
+  document.getElementById('llm_model').value = model;
+
+  const remember = document.getElementById('remember_key').checked;
+  localStorage.setItem(LS.remember, remember ? '1' : '0');
+  localStorage.setItem(LS.provider, activeProvider);
+  localStorage.setItem(LS.base, base);
+  localStorage.setItem(LS.model, model);
+  if (remember) {
+    localStorage.setItem(LS.key, key);
+    sessionStorage.removeItem(LS.key);
+  } else {
+    localStorage.removeItem(LS.key);
+    sessionStorage.setItem(LS.key, key);
+  }
+
+  markKeySet();
+  setStatus('');
+  showSearchPanel(true);
+  updatePlan();
+}
+
+function markKeySet() {
+  const el = document.getElementById('key-state');
+  el.textContent = config.has_server_key ? 'server key' : 'key set';
+  el.classList.add('ok');
+  updateActiveProvider();
+}
+
+function updateActiveProvider() {
+  const line = document.getElementById('active-provider');
+  if (!line) return;
+  const base = document.getElementById('llm_base_url').value.trim();
+  const model = document.getElementById('llm_model').value.trim();
+  const hasKey = !!currentKey();
+  if (config.has_server_key && !hasKey) {
+    line.textContent = 'Using this site\'s server key · ' + (model || 'default model');
+    return;
+  }
+  if (!hasKey) {
+    line.textContent = 'No API key yet — add one to start scanning.';
+    return;
+  }
+  let host = base;
+  try { host = new URL(base).host; } catch (_) {}
+  line.textContent = 'Using your ' + (PROVIDERS[activeProvider] || {}).label + ' key · ' + model + ' · ' + host;
+}
+
+function toggleKeyPanel() {
+  const keyVisible = document.getElementById('key-panel').style.display !== 'none';
+  showSearchPanel(keyVisible);
+  // Re-open the how-to + base URL so "change key" is never a dead end,
+  // even after the panel was collapsed.
+  document.getElementById('howto').style.display = '';
+  document.getElementById('advanced').open = true;
+}
+
+/* --------------------------------------------------------------- providers */
+function selectProvider(id, opts) {
+  opts = opts || {};
+  const preset = PROVIDERS[id] || PROVIDERS.custom;
+  activeProvider = id;
+
+  document.querySelectorAll('.pcard').forEach(function (card) {
+    const on = card.dataset.provider === id;
+    card.classList.toggle('is-active', on);
+    card.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
+
+  document.getElementById('howto-title').textContent = preset.title;
+  const link = document.getElementById('howto-link');
+  if (preset.keyUrl) {
+    link.href = preset.keyUrl;
+    link.textContent = preset.keyUrlLabel;
+    link.style.display = '';
+  } else {
+    link.style.display = 'none';
+  }
+
+  document.getElementById('howto-steps').textContent = '';
+  (preset.steps || []).forEach(function (step) {
+    const li = document.createElement('li');
+    li.textContent = step;
+    document.getElementById('howto-steps').appendChild(li);
+  });
+  document.getElementById('howto-note').textContent = preset.note || '';
+
+  const dl = document.getElementById('model-suggestions');
+  dl.textContent = '';
+  (preset.models || []).forEach(function (m) {
+    const opt = document.createElement('option');
+    opt.value = m;
+    dl.appendChild(opt);
+  });
+
+  const baseEl = document.getElementById('llm_base_url');
+  const modelEl = document.getElementById('llm_model');
+  if (id === 'custom') {
+    if (!opts.keepEntry) {
+      baseEl.value = '';
+      modelEl.value = '';
+    }
+    baseEl.placeholder = 'https://your-provider.example/v1';
+    modelEl.placeholder = 'model-name';
+  } else {
+    baseEl.value = preset.base;
+    modelEl.value = preset.model;
+    baseEl.placeholder = preset.base;
+    modelEl.placeholder = preset.model;
+  }
+
+  document.getElementById('base-url-hint').textContent = preset.base
+    ? 'Auto-filled for ' + preset.label + '. Change it only if your provider needs something different.'
+    : 'Required for a custom provider — the OpenAI-compatible base, usually ending in /v1.';
+
+  updateActiveProvider();
+}
+
+/* ------------------------------------------------------------------ cursor */
+function refreshCursorHint() {
+  const cursor = getCursor();
+  const el = document.getElementById('cursor-hint');
+  if (!cursor) {
+    el.textContent = 'No saved scan position on this device yet — the next scan starts from the date above.';
+    return;
+  }
+  const when = new Date(cursor.oldest_date).toLocaleString();
+  el.textContent = 'Last scan covered back to ' + when + ' (' + cursor.count + ' posts). "Continue" scans backwards from there.';
+}
+
+function getCursor() {
+  try { return JSON.parse(localStorage.getItem(LS.cursor) || 'null'); } catch (_) { return null; }
+}
+
+function applyCursorChoice() {
+  const mode = document.getElementById('resume').value;
+  const cursor = getCursor();
+  if (mode === 'cursor' && cursor) {
+    const d = new Date(cursor.oldest_date);
+    d.setUTCDate(d.getUTCDate() - 1);
+    document.getElementById('since').value = d.toISOString().slice(0, 10);
+  }
+  updatePlan();
+}
+
+/* -------------------------------------------------------------------- plan */
+let planTimer = null;
+function updatePlan() {
+  clearTimeout(planTimer);
+  planTimer = setTimeout(async function () {
+    const since = document.getElementById('since').value;
+    const box = document.getElementById('plan-box');
+    if (!since) { box.classList.remove('show'); return; }
+    try {
+      const res = await fetch('/plan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ since: since, tz_offset_minutes: new Date().getTimezoneOffset() })
+      });
+      if (!res.ok) { box.classList.remove('show'); return; }
+      const p = await res.json();
+      box.textContent = '';
+      const b1 = document.createElement('b');
+      b1.textContent = p.span;
+      box.appendChild(document.createTextNode('This scan covers '));
+      box.appendChild(b1);
+      box.appendChild(document.createTextNode(' in ' + p.window_count + ' window(s) of 14 days. Up to ' +
+        p.max_posts + ' posts, about ' + p.max_batches + ' AI calls, usually a few minutes.'));
+      const br = document.createElement('br');
+      box.appendChild(br);
+      box.appendChild(document.createTextNode('Windows: ' + p.windows.map(function (w) { return w.label; }).join(' · ')));
+      if (p.clamped) {
+        box.appendChild(document.createElement('br'));
+        box.appendChild(document.createTextNode('Note: older dates are capped to the last ' +
+          (config.max_lookback_days || 120) + ' days.'));
+      }
+      box.classList.add('show');
+    } catch (_) {
+      box.classList.remove('show');
+    }
+  }, 250);
+}
+
+/* ------------------------------------------------------------------ search */
+async function runSearch() {
+  const btn = document.getElementById('search-btn');
+  const channel = document.getElementById('channel').value.trim();
+  const criteria = document.getElementById('criteria').value.trim();
+  const since = document.getElementById('since').value;
+  const apiKey = currentKey();
+  const base = document.getElementById('llm_base_url').value.trim();
+  const model = document.getElementById('llm_model').value.trim();
+
+  localStorage.setItem(LS.inputs, JSON.stringify({ channel: channel, criteria: criteria }));
+
+  if (!channel || !criteria || !since) {
+    return setStatus('Channel, criteria and date are all required.', true);
+  }
+  if (!config.has_server_key && !apiKey) {
+    showSearchPanel(false);
+    return setStatus('Your own API key is required — add it above.', true);
+  }
+
+  resetResults();
+  btn.disabled = true;
+  btn.textContent = 'Scanning…';
+  setStatus('');
+  document.getElementById('progress-wrap').classList.add('show');
+  setProgress('Starting…', 0, '');
+  document.getElementById('cancel-btn').style.display = '';
+
+  try {
+    const res = await fetch('/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        channel: channel, criteria: criteria, since: since,
+        tz_offset_minutes: new Date().getTimezoneOffset(),
+        llm_base_url: base, llm_api_key: apiKey, llm_model: model
+      })
+    });
+
+    if (!res.ok) {
+      let detail = res.statusText;
+      try { const j = await res.json(); detail = j.detail || detail; } catch (_) {}
+      setStatus('Error: ' + detail, true);
+      finishScanUI();
+      return;
+    }
+
+    const data = await res.json();
+    currentJobId = data.job_id;
+    poll();
+  } catch (e) {
+    setStatus('Request failed: ' + e.message, true);
+    finishScanUI();
+  }
+}
+
+function poll() {
+  clearTimeout(pollTimer);
+  pollTimer = setTimeout(async function () {
+    if (!currentJobId) return;
+    try {
+      const res = await fetch('/search/' + currentJobId);
+      if (res.status === 404) {
+        setStatus('That scan expired on the server. Run it again.', true);
+        return finishScanUI();
+      }
+      const job = await res.json();
+      renderJob(job);
+      if (job.done) return finishScanUI();
+      poll();
+    } catch (e) {
+      setStatus('Lost connection to the server, retrying…', true);
+      pollTimer = setTimeout(poll, 3000);
+    }
+  }, 1500);
+}
+
+function renderJob(job) {
+  const stageNames = {
+    queued: 'Queued', planning: 'Planning the date range',
+    fetching: 'Reading Telegram', classifying: 'Classifying posts',
+    done: 'Done', error: 'Error', cancelled: 'Cancelled'
+  };
+  const stage = stageNames[job.stage] || job.stage;
+
+  const winPart = job.windows_total ? (job.windows_done / job.windows_total) * 40 : 0;
+  const batchPart = job.batches_total
+    ? ((job.batches_done + job.batches_failed) / job.batches_total) * 60 : 0;
+  const pct = job.stage === 'done' ? 100 : Math.min(99, winPart + batchPart);
+
+  let right = '';
+  if (job.stage === 'classifying' && job.batches_total) {
+    right = (job.batches_done + job.batches_failed) + '/' + job.batches_total + ' batches';
+  } else if (job.stage === 'fetching' && job.windows_total) {
+    right = 'window ' + Math.min(job.windows_done + 1, job.windows_total) + '/' + job.windows_total;
+  } else if (job.done) {
+    right = Math.round(job.elapsed_seconds || 0) + 's';
+  }
+
+  const line = (job.done && job.message) ? job.message : (stage + ' — ' + (job.message || ''));
+  setProgress(line, pct, right);
+
+  document.getElementById('stat-scanned').textContent = job.posts_scanned || job.posts_fetched || 0;
+  document.getElementById('stat-matched').textContent = (job.results || []).length;
+  toggleStat('stat-expired-box', job.expired_count > 0, job.expired_count);
+  toggleStat('stat-dupes-box', job.duplicates_removed > 0, job.duplicates_removed);
+  toggleStat('stat-failed-box', job.batches_failed > 0, job.batches_failed);
+  document.getElementById('stats').style.display = 'flex';
+
+  if (job.error) setStatus('Error: ' + job.error, true);
+  else if (job.stage === 'done') setStatus(job.message, false);
+
+  renderWarnings(job.warnings || []);
+  renderResults(job.results || []);
+
+  if (job.stage === 'done') {
+    saveCursor(job);
+    document.getElementById('cancel-btn').style.display = 'none';
+  }
+}
+
+function saveCursor(job) {
+  if (!job.cursor) return;
+  localStorage.setItem(LS.cursor, JSON.stringify({
+    channel: document.getElementById('channel').value.trim(),
+    oldest_date: job.cursor.oldest_date,
+    oldest_id: job.cursor.oldest_id,
+    count: job.cursor.count,
+    at: new Date().toISOString()
+  }));
+  refreshCursorHint();
+}
+
+function finishScanUI() {
+  const btn = document.getElementById('search-btn');
+  btn.disabled = false;
+  btn.textContent = 'Scan channel';
+  currentJobId = null;
+  document.getElementById('cancel-btn').style.display = 'none';
+  clearTimeout(pollTimer);
+}
+
+async function cancelScan() {
+  if (!currentJobId) return;
+  try {
+    await fetch('/search/' + currentJobId + '/cancel', { method: 'POST' });
+    setStatus('Cancelling…', false);
+  } catch (_) {}
+}
+
+/* ------------------------------------------------------------------ render */
+function resetResults() {
+  document.getElementById('results').textContent = '';
+  document.getElementById('warnings-slot').textContent = '';
+  document.getElementById('stats').style.display = 'none';
+  document.getElementById('progress-wrap').classList.remove('show');
+}
+
+function renderWarnings(warnings) {
+  const slot = document.getElementById('warnings-slot');
+  slot.textContent = '';
+  if (!warnings.length) return;
+  const box = document.createElement('div');
+  box.className = 'warnings';
+  const head = document.createElement('b');
+  head.textContent = 'Some parts of the scan had trouble:';
+  box.appendChild(head);
+  warnings.forEach(function (w) {
+    box.appendChild(document.createElement('br'));
+    box.appendChild(document.createTextNode('• ' + w));
+  });
+  slot.appendChild(box);
+}
+
+function renderResults(results) {
+  const el = document.getElementById('results');
+  el.textContent = '';
+  if (!results.length) {
+    if (document.getElementById('stats').style.display !== 'none') {
+      const empty = document.createElement('div');
+      empty.className = 'empty-state';
+      empty.textContent = 'No matching posts in this range. Try widening the date, or describe your profile differently.';
+      el.appendChild(empty);
+    }
+    return;
+  }
+
+  results.forEach(function (m, i) {
+    const card = document.createElement('div');
+    card.className = 'result';
+
+    const top = document.createElement('div');
+    top.className = 'result-top';
+    const badge = document.createElement('span');
+    badge.className = 'badge ' + (m.status === 'high' ? 'high' : 'medium');
+    badge.textContent = m.status === 'high' ? 'Strong match' : 'Possible match';
+    const date = document.createElement('span');
+    date.className = 'result-date';
+    date.textContent = new Date(m.date).toLocaleString();
+    top.appendChild(badge);
+    top.appendChild(date);
+
+    const reason = document.createElement('div');
+    reason.className = 'result-reason';
+    reason.textContent = m.reason || '';
+
+    const text = (m.text || '');
+    const isLong = text.length > 260;
+    const shortText = isLong ? text.slice(0, 260) + '…' : text;
+    const textEl = document.createElement('div');
+    textEl.className = 'result-text';
+    textEl.id = 'text-' + i;
+    textEl.textContent = shortText;
+
+    const actions = document.createElement('div');
+    actions.className = 'result-actions';
+    if (isLong) {
+      const toggle = document.createElement('button');
+      toggle.className = 'small';
+      toggle.textContent = 'Show full text';
+      let expanded = false;
+      toggle.addEventListener('click', function () {
+        expanded = !expanded;
+        textEl.textContent = expanded ? text : shortText;
+        toggle.textContent = expanded ? 'Show less' : 'Show full text';
+      });
+      actions.appendChild(toggle);
+    }
+    const linkEl = document.createElement('a');
+    linkEl.className = 'btn-solid';
+    linkEl.href = m.link;
+    linkEl.target = '_blank';
+    linkEl.rel = 'noopener noreferrer';
+    linkEl.textContent = 'Open in Telegram';
+    actions.appendChild(linkEl);
+
+    card.appendChild(top);
+    card.appendChild(reason);
+    card.appendChild(textEl);
+    card.appendChild(actions);
+    el.appendChild(card);
+  });
+}
+
+/* ------------------------------------------------------------------- utils */
+function setProgress(text, pct, right) {
+  document.getElementById('stage-line').textContent = text;
+  document.getElementById('progress-bar').style.width = Math.max(2, Math.min(100, pct)) + '%';
+  document.getElementById('progress-left').textContent = right || '—';
+}
+
+function toggleStat(id, show, value) {
+  const box = document.getElementById(id);
+  box.style.display = show ? 'block' : 'none';
+  if (show) box.querySelector('.num').textContent = value;
+}
+
+function setStatus(text, isError) {
+  const el = document.getElementById('status-line');
+  el.textContent = text || '';
+  el.classList.toggle('is-error', !!isError);
+}
+
+function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+function daysAgoISO(days) {
+  const d = new Date();
+  d.setDate(d.getDate() - days);
+  return d.toISOString().slice(0, 10);
+}
+</script>
+</body>
+</html>

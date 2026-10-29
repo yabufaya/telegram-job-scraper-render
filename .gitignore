@@ -1,0 +1,21 @@
+# secrets & local state
+.env
+.env.*
+!.env.example
+*.session
+*.session-journal
+session_*.txt
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.mypy_cache/
+.pytest_cache/
+
+# os / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

@@ -1,0 +1,55 @@
+# Render Blueprint — deploy with: Dashboard → New → Blueprint → pick this repo.
+# Docs: https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: job-radar
+    runtime: python
+    plan: free              # change to "starter" ($7/mo) for always-on, no cold starts
+    region: frankfurt       # closest to Ethiopia/Europe; use "oregon" for US
+    branch: main
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: TELEGRAM_API_ID
+        sync: false          # set in the dashboard, never in the repo
+      - key: TELEGRAM_API_HASH
+        sync: false
+      - key: TELEGRAM_SESSION_STRING
+        sync: false
+      - key: TELEGRAM_SOURCE_ORDER
+        value: preview,telethon
+      # Leave the three LLM_ vars blank = strict "bring your own key" mode.
+      - key: LLM_BASE_URL
+        value: ""
+      - key: LLM_API_KEY
+        value: ""
+      - key: LLM_MODEL_NAME
+        value: ""
+      - key: ALLOW_SERVER_LLM_FALLBACK
+        value: "false"
+      - key: BATCH_SIZE
+        value: "15"
+      - key: MAX_CONCURRENT_LLM_CALLS
+        value: "3"
+      - key: MAX_POSTS_PER_SCAN
+        value: "600"
+      - key: MAX_LOOKBACK_DAYS
+        value: "120"
+      - key: MAX_BATCH_CHARS
+        value: "40000"
+      - key: MAX_CHARS_PER_POST
+        value: "6000"
+      - key: DEDUPE_BY_TEXT
+        value: "true"
+      - key: RATE_LIMIT_SCANS_PER_HOUR
+        value: "6"
+      - key: RATE_LIMIT_IP_CONCURRENCY
+        value: "1"
+      - key: GLOBAL_CONCURRENCY
+        value: "4"
+      - key: LOG_LEVEL
+        value: INFO
