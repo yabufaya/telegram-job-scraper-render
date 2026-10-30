@@ -561,6 +561,7 @@ const LS = {
   cursor: 'jr_cursor_v3',
   inputs: 'jr_inputs_v3',
   theme: 'jr_theme_v3',
+  themeChosen: 'jr_theme_choice_v3',
 };
 
 /* Providers. Model names are NOT hardcoded as gospel: the "Load models"
@@ -634,14 +635,31 @@ function applyTheme(mode) {
 }
 
 function initTheme() {
-  // Day mode is the default. Someone on a dark OS still starts light until
-  // they pick the moon or the half-circle (follow system) themselves.
+  // Day mode is the default: a first-time visitor starts light even if their
+  // operating system is in dark mode.
+  //
+  // Migration: older builds defaulted to 'system', so anyone who used the site
+  // before has 'system' sitting in localStorage and would stay dark forever.
+  // A stored 'system' is therefore ignored unless the visitor pressed one of
+  // the three buttons themselves - that is what LS.themeChosen records.
   let saved = 'light';
-  try { saved = localStorage.getItem(LS.theme) || 'light'; } catch (_) {}
+  let chosen = false;
+  try {
+    saved = localStorage.getItem(LS.theme) || 'light';
+    chosen = localStorage.getItem(LS.themeChosen) === '1';
+  } catch (_) {}
+
+  if (saved === 'system' && !chosen) saved = 'light';
+
   applyTheme(saved);
+
   document.querySelectorAll('[data-theme-btn]').forEach(function (btn) {
-    btn.addEventListener('click', function () { applyTheme(btn.dataset.themeBtn); });
+    btn.addEventListener('click', function () {
+      try { localStorage.setItem(LS.themeChosen, '1'); } catch (_) {}
+      applyTheme(btn.dataset.themeBtn);
+    });
   });
+
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () {
     let mode = 'light';
     try { mode = localStorage.getItem(LS.theme) || 'light'; } catch (_) {}
