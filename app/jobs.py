@@ -44,7 +44,7 @@ MAX_JOB_SECONDS = 20 * 60      # hard ceiling per scan
 @dataclass
 class Job:
     id: str
-    channel: str
+    channels: list[str]
     criteria: str
     since_raw: str
     tz_offset_minutes: int
@@ -87,7 +87,8 @@ class Job:
             "stage": self.stage,
             "message": self.message,
             "error": self.error,
-            "channel": self.channel,
+            "channels": self.channels,
+            "channel": ", ".join(self.channels),
             "windows_total": self.windows_total,
             "windows_done": self.windows_done,
             "current_window": self.current_window,
@@ -115,10 +116,10 @@ class JobStore:
         self._tasks: dict[str, asyncio.Task] = {}
         self._by_ip: dict[str, int] = {}
 
-    def create(self, *, channel: str, criteria: str, since_raw: str, tz_offset_minutes: int, ip: str) -> Job:
+    def create(self, *, channels: list[str], criteria: str, since_raw: str, tz_offset_minutes: int, ip: str) -> Job:
         job = Job(
             id=uuid.uuid4().hex[:12],
-            channel=channel,
+            channels=channels,
             criteria=criteria,
             since_raw=since_raw,
             tz_offset_minutes=tz_offset_minutes,
@@ -236,39 +237,59 @@ async def _run(job: Job, base_url: str, api_key: str, model: str, started: float
     all_posts: list[dict] = []
     fetch_failures: list[str] = []
 
+    multi = len(job.channels) > 1
     for window in windows:
         if job.cancelled or time.time() - started > MAX_JOB_SECONDS:
             job.stage = "cancelled" if job.cancelled else "done"
             break
 
         job.current_window = window.label
-        job.message = f"Reading {window.label}…"
         job.windows[window.index]["status"] = "fetching"
-        remaining = max(0, settings.max_posts_per_scan - len(all_posts))
-        if remaining <= 0:
-            job.warnings.append(
-                f"Stopped at the {settings.max_posts_per_scan}-post cap. Narrow the date range "
-                f"or scan in two passes."
+        window_posts = 0
+        channel_failures = 0
+
+        for channel in job.channels:
+            if job.cancelled or time.time() - started > MAX_JOB_SECONDS:
+                break
+
+            remaining = max(0, settings.max_posts_per_scan - len(all_posts))
+            if remaining <= 0:
+                job.warnings.append(
+                    f"Stopped at the {settings.max_posts_per_scan}-post cap. Narrow the date range "
+                    f"or scan in two passes."
+                )
+                job.windows[window.index]["status"] = "skipped"
+                break
+
+            job.message = (
+                f"Reading @{channel} · {window.label}…" if multi
+                else f"Reading {window.label}…"
             )
-            job.windows[window.index]["status"] = "skipped"
-            continue
+            job.current_window = f"@{channel} · {window.label}" if multi else window.label
 
-        try:
-            posts, source = await fetch_window(job.channel, window, max_posts=remaining)
-            job.sources_used.add(source)
-            all_posts.extend(posts)
-            job.posts_fetched = len(all_posts)
-            job.windows[window.index]["status"] = "done"
-            job.windows[window.index]["posts"] = len(posts)
-        except PreviewUnavailable as exc:
-            job.windows[window.index]["status"] = "failed"
-            fetch_failures.append(str(exc))
-            job.warnings.append(f"{window.label}: {exc} (no Telegram session configured)")
-        except SourceError as exc:
-            job.windows[window.index]["status"] = "failed"
-            fetch_failures.append(str(exc))
-            job.warnings.append(f"{window.label}: {exc}")
+            try:
+                posts, source = await fetch_window(channel, window, max_posts=remaining)
+                job.sources_used.add(source)
+                all_posts.extend(posts)
+                window_posts += len(posts)
+                job.posts_fetched = len(all_posts)
+                job.windows[window.index]["status"] = "done"
+            except PreviewUnavailable as exc:
+                channel_failures += 1
+                fetch_failures.append(f"@{channel}: {exc}")
+                job.warnings.append(
+                    f"@{channel} · {window.label}: {exc} (no Telegram session configured)"
+                )
+            except SourceError as exc:
+                channel_failures += 1
+                fetch_failures.append(f"@{channel}: {exc}")
+                job.warnings.append(f"@{channel} · {window.label}: {exc}")
 
+            job.touch()
+
+        job.windows[window.index]["posts"] = window_posts
+        if channel_failures and channel_failures == len(job.channels):
+            job.windows[window.index]["status"] = "failed"
         job.windows_done += 1
         job.touch()
 

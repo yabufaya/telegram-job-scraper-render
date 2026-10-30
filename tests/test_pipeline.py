@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from app import pipeline  # noqa: E402
+from app import pipeline, security  # noqa: E402
 from app.window import (  # noqa: E402
     clamp_lookback,
     parse_since,
@@ -263,3 +263,46 @@ class FieldGateTests(unittest.TestCase):
         results, _, warns = pipeline.merge_batch_results(items, batch, criteria=self.CRIT)
         self.assertEqual(results, [])
         self.assertTrue(any(w.startswith("__field_dropped__:") for w in warns))
+
+
+class ChannelParsingTests(unittest.TestCase):
+    """Multiple channels per scan.
+
+    Regression guards for two long-standing validation holes found while adding
+    this: 'https://t.me/+abc' produced a username fragment instead of being
+    rejected, and a message link 't.me/channel/22374' produced "22374".
+    """
+
+    def test_accepts_one_or_many(self):
+        self.assertEqual(security.parse_channels("@ethio_job_vacancy1"), ["ethio_job_vacancy1"])
+        self.assertEqual(
+            security.parse_channels("@ethio_job_vacancy1, @Ethiojobs2000\ndurov"),
+            ["ethio_job_vacancy1", "Ethiojobs2000", "durov"],
+        )
+
+    def test_accepts_links_and_dedupes(self):
+        self.assertEqual(
+            security.parse_channels(
+                "https://t.me/ethio_job_vacancy1 https://t.me/s/Ethiojobs2000 @ethio_job_vacancy1"
+            ),
+            ["ethio_job_vacancy1", "Ethiojobs2000"],
+        )
+
+    def test_rejects_private_invites(self):
+        for raw in ("https://t.me/+AbCdEf123", "@joinchat/AAAAA"):
+            with self.assertRaises(security.ValidationError):
+                security.parse_channels(raw)
+
+    def test_rejects_message_links_but_names_the_channel(self):
+        with self.assertRaises(security.ValidationError) as ctx:
+            security.parse_channels("https://t.me/ethio_job_vacancy1/22374")
+        self.assertIn("@ethio_job_vacancy1", str(ctx.exception))
+
+    def test_caps_the_number_of_channels(self):
+        with self.assertRaises(security.ValidationError) as ctx:
+            security.parse_channels(" ".join(f"chan{i:02d}x" for i in range(8)))
+        self.assertIn(str(security.MAX_CHANNELS), str(ctx.exception))
+
+    def test_blank_input_is_rejected(self):
+        with self.assertRaises(security.ValidationError):
+            security.parse_channels("   ")

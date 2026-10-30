@@ -91,24 +91,92 @@ def validate_llm_base_url(url: str, allow_insecure: bool = False) -> str:
 
 
 def validate_channel(raw: str) -> str:
-    """Accept '@name', 'name', 'https://t.me/name' or 't.me/s/name'."""
+    """Accept '@name', 'name', 'https://t.me/name' or 't.me/s/name'.
+
+    Rejects invite links and message links with a message that says what to do
+    instead. Both used to slip through this function's regex: "t.me/+abc" and
+    "t.me/joinchat/xxx" silently produced a username fragment, and a message
+    link such as t.me/channel/22374 produced the channel "22374".
+    """
     import re
 
-    text = (raw or "").strip()
+    text = (raw or "").strip().strip("<>()[]\"'")
     if not text:
         raise ValidationError("Channel is required")
-    match = re.search(r"(?:t\.me/(?:s/)?|@)?([A-Za-z0-9_]{4,32})/?$", text)
-    if not match:
+
+    low = text.lower()
+    if "joinchat" in low or re.search(r"t\.me/\+", low) or low.startswith("+") or "t.me/addstickers" in low:
+        raise ValidationError(
+            "Private invite links are not supported. Use the public @username of the channel."
+        )
+
+    # Pull out the path portion of a t.me link, if it is one.
+    m = re.search(r"(?:https?://)?t\.me/(?:s/)?([^\s?#]+)", text, re.I)
+    if m:
+        path = m.group(1).strip("/")
+        parts = [p for p in path.split("/") if p]
+        if len(parts) >= 2:
+            raise ValidationError(
+                f"'{text}' is a link to a single message. Use just the channel: "
+                f"@{parts[0] or 'channelname'}"
+            )
+        candidate = parts[0] if parts else ""
+    else:
+        candidate = text.lstrip("@").strip("/")
+
+    if not re.fullmatch(r"[A-Za-z0-9_]{4,32}", candidate):
         raise ValidationError(
             "That doesn't look like a public channel. Use a username like @somechannel "
             "or a link like https://t.me/somechannel"
         )
-    username = match.group(1)
-    if username.lower() in {"joinchat", "addstickers", "share", "proxy"}:
+    if candidate.lower() in {"joinchat", "addstickers", "share", "proxy"}:
         raise ValidationError("Private invite links are not supported — use a public channel username")
-    if len(username) < 5:
-        raise ValidationError("Telegram usernames are at least 5 characters long")
-    return username
+    if len(candidate) < 5:
+        raise ValidationError(f"@{candidate} is too short — Telegram usernames are at least 5 characters")
+    return candidate
+
+
+MAX_CHANNELS = 6
+
+
+def parse_channels(raw: str) -> list[str]:
+    """Accept one channel or many: newlines, commas, spaces, @handles or links.
+
+    Returns a de-duplicated, order-preserving list. Raises ValidationError with
+    a message naming the offending entry, so the visitor knows which one is bad.
+    """
+    import re
+
+    text = (raw or "").strip()
+    if not text:
+        raise ValidationError("Enter at least one channel")
+
+    # Split on newlines, commas, semicolons and whitespace.
+    pieces = [p for p in re.split(r"[\s,;]+", text) if p.strip()]
+    if not pieces:
+        raise ValidationError("Enter at least one channel")
+
+    # Collapse the old two-box shape: "https://t.me/x https://t.me/y".
+    seen: set[str] = set()
+    channels: list[str] = []
+    for piece in pieces:
+        try:
+            name = validate_channel(piece)
+        except ValidationError as exc:
+            raise ValidationError(f"'{piece}': {exc}") from exc
+        if name.lower() in seen:
+            continue
+        seen.add(name.lower())
+        channels.append(name)
+
+    if not channels:
+        raise ValidationError("Enter at least one channel")
+    if len(channels) > MAX_CHANNELS:
+        raise ValidationError(
+            f"Up to {MAX_CHANNELS} channels per scan. You sent {len(channels)} — "
+            f"split them into two scans."
+        )
+    return channels
 
 
 def validate_criteria(raw: str) -> str:

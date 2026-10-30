@@ -202,11 +202,24 @@
   .badge.high::before { background: var(--accent); }
   .badge.medium { background: var(--warn-dim); color: var(--warn); }
   .badge.medium::before { background: var(--warn); }
-  .result-date { font-size: .76rem; color: var(--text-dim); font-weight: 600; }
+  .result-date { font-size: .76rem; color: var(--text-dim); font-weight: 600; margin-left: auto; }
+  .result-source {
+    font-size: .72rem; font-weight: 700; padding: 2px 8px; border-radius: 999px;
+    background: var(--panel-raised); border: 1px solid var(--border);
+    color: var(--text-soft); white-space: nowrap;
+  }
 
   /* ------------------------- criteria helpers ----------------------------- */
   #criteria-read { margin-bottom: 4px; }
   #search-panel .row-split { margin-top: 18px; }
+  .channel-read { display: none; flex-wrap: wrap; gap: 6px; margin-top: 8px; align-items: center; }
+  .channel-read.show { display: flex; }
+  .channel-pill {
+    font-size: .76rem; font-weight: 700; padding: 4px 9px; border-radius: 999px;
+    background: var(--accent-dim); color: var(--accent); border: 1px solid transparent;
+  }
+  .channel-pill.bad { background: var(--warn-dim); color: var(--warn); }
+  .channel-count { font-size: .75rem; color: var(--text-soft); margin-left: 2px; }
   .criteria-read {
     margin-top: 10px; font-size: .8rem; color: var(--text-soft); display: none;
     padding: 9px 12px; border-radius: 9px; background: var(--panel-raised);
@@ -406,7 +419,7 @@
       <button type="button" data-theme-btn="dark" title="Dark" aria-pressed="false">☾</button>
     </div>
   </div>
-  <p class="intro">Reads a public Telegram job channel, skips posts past their deadline, and shows only what matches your profile. Free to use — the AI runs on your own free API key.</p>
+  <p class="intro">Reads one or several public Telegram job channels at once, skips posts past their deadline, and shows only what matches your profile. Free to use — the AI runs on your own free API key.</p>
 </header>
 
 <!-- ============ STEP 1: key ============ -->
@@ -486,9 +499,10 @@
   </div>
   <div class="hint" id="active-provider" style="margin-top:6px"></div>
 
-  <label for="channel">Telegram channel</label>
-  <input id="channel" placeholder="@ethio_job_vacancy1 · or https://t.me/Ethiojobs2000">
-  <div class="hint">Public channels only. Works without any Telegram login for most channels.</div>
+  <label for="channel">Telegram channels</label>
+  <textarea id="channel" rows="2" placeholder="One per line, e.g.&#10;@ethio_job_vacancy1&#10;@Ethiojobs2000"></textarea>
+  <div class="hint">One or many — separate with a new line or comma. Public channels only. Works without any Telegram login for most channels.</div>
+  <div class="channel-read" id="channel-read"></div>
 
   <label for="criteria">Your graduate field and level</label>
   <textarea id="criteria" rows="3" placeholder="Example: I am a fresh graduate in Accounting and Finance with 0 years of experience, looking for entry-level jobs in Addis Ababa."></textarea>
@@ -512,7 +526,7 @@
 
   <div class="plan-box" id="plan-box"></div>
 
-  <button class="primary" id="search-btn">Scan channel</button>
+  <button class="primary" id="search-btn">Scan channels</button>
 
   <div class="progress-wrap" id="progress-wrap">
     <div class="stage-line" id="stage-line">Starting…</div>
@@ -529,6 +543,7 @@
   <div class="stat matched"><div class="num" id="stat-matched">0</div><div class="label">Matches</div></div>
   <div class="stat warned" id="stat-expired-box" style="display:none"><div class="num" id="stat-expired">0</div><div class="label">Expired, skipped</div></div>
   <div class="stat"><div class="num" id="stat-dupes" style="display:none">0</div><div class="label" id="stat-dupes-label" style="display:none">Duplicates dropped</div></div>
+  <div class="stat warned" id="stat-field-box" style="display:none"><div class="num" id="stat-field">0</div><div class="label">Wrong field, dropped</div></div>
   <div class="stat failed" id="stat-failed-box" style="display:none"><div class="num" id="stat-failed">0</div><div class="label">Batches failed</div></div>
 </div>
 
@@ -647,6 +662,7 @@ function wireEvents() {
   document.getElementById('cancel-btn').addEventListener('click', cancelScan);
   document.getElementById('since').addEventListener('change', updatePlan);
   document.getElementById('criteria').addEventListener('input', updateCriteriaRead);
+  document.getElementById('channel').addEventListener('input', updateChannelRead);
   document.getElementById('llm_api_key').addEventListener('paste', function () {
     setTimeout(function () { setModelsStatus('Key pasted — press "Load models" to check it and see the live list.', false); }, 50);
   });
@@ -714,6 +730,79 @@ function updateCriteriaRead() {
   }
 }
 
+/* ------------------------------------------------------------ channels
+   One box, many channels. We parse locally so the visitor sees immediately
+   which names were recognised - and which were rejected - before spending a
+   scan on them. The server re-validates everything with the same rules. */
+var CHANNEL_MAX = 6;
+
+function parseChannelsLocal(raw) {
+  var text = (raw || '').trim();
+  if (!text) return { ok: [], bad: [] };
+
+  var pieces = text.split(/[\s,;]+/).filter(Boolean);
+  var ok = [], bad = [], seen = {};
+
+  pieces.forEach(function (piece) {
+    var t = piece.replace(/^[<>()\[\]"']+|[<>()\[\]"']+$/g, '');
+    var low = t.toLowerCase();
+
+    if (low.indexOf('joinchat') !== -1 || /t\.me\/\+/.test(low) || t.charAt(0) === '+') {
+      bad.push({ raw: t, why: 'private invite link' });
+      return;
+    }
+    var m = t.match(/(?:https?:\/\/)?t\.me\/(?:s\/)?([^\s?#]+)/i);
+    var name;
+    if (m) {
+      var parts = m[1].replace(/\/+$/, '').split('/').filter(Boolean);
+      if (parts.length >= 2) { bad.push({ raw: t, why: 'message link - use the channel name' }); return; }
+      name = parts[0] || '';
+    } else {
+      name = t.replace(/^@/, '').replace(/\/+$/, '');
+    }
+    if (!/^[A-Za-z0-9_]{4,32}$/.test(name)) { bad.push({ raw: t, why: 'not a valid username' }); return; }
+    if (name.length < 5) { bad.push({ raw: t, why: 'too short (min 5)' }); return; }
+    if (seen[name.toLowerCase()]) return;
+    seen[name.toLowerCase()] = true;
+    ok.push(name);
+  });
+
+  return { ok: ok, bad: bad };
+}
+
+function updateChannelRead() {
+  var box = document.getElementById('channel-read');
+  var parsed = parseChannelsLocal(document.getElementById('channel').value);
+  box.textContent = '';
+
+  if (!parsed.ok.length && !parsed.bad.length) { box.classList.remove('show'); return; }
+  box.classList.add('show');
+
+  parsed.ok.forEach(function (name) {
+    var pill = document.createElement('span');
+    pill.className = 'channel-pill';
+    pill.textContent = '@' + name;
+    box.appendChild(pill);
+  });
+  parsed.bad.forEach(function (b) {
+    var pill = document.createElement('span');
+    pill.className = 'channel-pill bad';
+    pill.textContent = b.raw + ' — ' + b.why;
+    box.appendChild(pill);
+  });
+
+  var count = document.createElement('span');
+  count.className = 'channel-count';
+  if (!parsed.ok.length) {
+    count.textContent = 'no valid channel yet';
+  } else if (parsed.ok.length === 1) {
+    count.textContent = '1 channel';
+  } else {
+    count.textContent = parsed.ok.length + ' channels · scanned together';
+  }
+  box.appendChild(count);
+}
+
 async function boot() {
   initTheme();
   wireEvents();
@@ -726,6 +815,7 @@ async function boot() {
   refreshCursorHint();
   startPlaceholderRotation();
   updateCriteriaRead();
+  updateChannelRead();
   updatePlan();
 }
 
@@ -1084,6 +1174,7 @@ function updatePlan() {
 async function runSearch() {
   const btn = document.getElementById('search-btn');
   const channel = document.getElementById('channel').value.trim();
+  const parsedChannels = parseChannelsLocal(channel);
   const criteria = document.getElementById('criteria').value.trim();
   const since = document.getElementById('since').value;
   const apiKey = currentKey();
@@ -1092,8 +1183,16 @@ async function runSearch() {
 
   localStorage.setItem(LS.inputs, JSON.stringify({ channel: channel, criteria: criteria }));
 
-  if (!channel || !criteria || !since) {
-    return setStatus('Channel, criteria and date are all required.', true);
+  if (!parsedChannels.ok.length) {
+    return setStatus(parsedChannels.bad.length
+      ? 'Fix the channel "' + parsedChannels.bad[0].raw + '" — ' + parsedChannels.bad[0].why + '.'
+      : 'At least one channel is required.', true);
+  }
+  if (parsedChannels.ok.length > CHANNEL_MAX) {
+    return setStatus('Up to ' + CHANNEL_MAX + ' channels per scan. Split them into two scans.', true);
+  }
+  if (!criteria || !since) {
+    return setStatus('Your field and the date are both required.', true);
   }
   if (!config.has_server_key && !apiKey) {
     showSearchPanel(false);
@@ -1102,7 +1201,8 @@ async function runSearch() {
 
   resetResults();
   btn.disabled = true;
-  btn.textContent = 'Scanning…';
+  btn.textContent = parsedChannels.ok.length > 1
+    ? 'Scanning ' + parsedChannels.ok.length + ' channels…' : 'Scanning…';
   setStatus('');
   document.getElementById('progress-wrap').classList.add('show');
   setProgress('Starting…', 0, '', true);
@@ -1113,7 +1213,7 @@ async function runSearch() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        channel: channel, criteria: criteria, since: since,
+        channels: parsedChannels.ok, criteria: criteria, since: since,
         tz_offset_minutes: new Date().getTimezoneOffset(),
         llm_base_url: base, llm_api_key: apiKey, llm_model: model
       })
@@ -1189,12 +1289,21 @@ function renderJob(job) {
   dupBox.style.display = job.duplicates_removed > 0 ? 'block' : 'none';
   if (job.duplicates_removed > 0) document.getElementById('stat-dupes').textContent = job.duplicates_removed;
   toggleStat('stat-failed-box', job.batches_failed > 0, job.batches_failed);
+  // The field gate reports itself through warnings; show it as a stat and keep
+  // it out of the red "something went wrong" banner.
+  const fieldWarn = (job.warnings || []).find(function (w) {
+    return w.indexOf('posted field did not match') !== -1;
+  });
+  const fieldDropped = fieldWarn ? parseInt(fieldWarn, 10) || 0 : 0;
+  toggleStat('stat-field-box', fieldDropped > 0, fieldDropped);
   document.getElementById('stats').style.display = 'flex';
 
   if (job.error) setStatus('Error: ' + job.error, true);
   else if (job.stage === 'done') setStatus(job.message, false);
 
-  renderWarnings(job.warnings || []);
+  renderWarnings((job.warnings || []).filter(function (w) {
+    return w.indexOf('posted field did not match') === -1;
+  }));
   renderResults(job.results || []);
 
   if (job.stage === 'done') {
@@ -1218,7 +1327,7 @@ function saveCursor(job) {
 function finishScanUI() {
   const btn = document.getElementById('search-btn');
   btn.disabled = false;
-  btn.textContent = 'Scan channel';
+  btn.textContent = 'Scan channels';
   currentJobId = null;
   document.getElementById('cancel-btn').style.display = 'none';
   clearTimeout(pollTimer);
@@ -1299,6 +1408,7 @@ function renderWarnings(warnings) {
 function renderResults(results) {
   const el = document.getElementById('results');
   el.textContent = '';
+  const multiChannel = parseChannelsLocal(document.getElementById('channel').value).ok.length > 1;
   if (!results.length) {
     if (document.getElementById('stats').style.display !== 'none') {
       const empty = document.createElement('div');
@@ -1322,6 +1432,13 @@ function renderResults(results) {
     date.className = 'result-date';
     date.textContent = new Date(m.date).toLocaleString();
     top.appendChild(badge);
+    if (multiChannel) {
+      const src = document.createElement('span');
+      src.className = 'result-source';
+      src.textContent = '@' + (m.channel || '');
+      src.title = 'This post came from @' + (m.channel || '');
+      top.appendChild(src);
+    }
     top.appendChild(date);
 
     const reason = document.createElement('div');

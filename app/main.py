@@ -32,6 +32,7 @@ from app.headers import SecurityHeadersMiddleware
 from app.jobs import describe_plan, run_scan, store
 from app.llm_adapter import LLMError, fetch_models
 from app.security import (
+    parse_channels,
     ConcurrencyGate,
     RateLimiter,
     ValidationError,
@@ -83,7 +84,8 @@ class ModelsRequest(BaseModel):
 
 
 class SearchRequest(BaseModel):
-    channel: str
+    channel: str = ""          # kept for backward compatibility
+    channels: list[str] = []   # preferred: one channel per entry
     criteria: str
     since: str
     tz_offset_minutes: int = 0
@@ -201,7 +203,8 @@ async def start_search(req: SearchRequest, request: Request):
 
     # --- input validation (fail fast, in the user's language) ---------------
     try:
-        channel = validate_channel(req.channel)
+        raw_channels = [c for c in (req.channels or [req.channel]) if c]
+        channels = parse_channels("\n".join(raw_channels))
         criteria = validate_criteria(req.criteria)
         if not req.since.strip():
             raise ValidationError("A 'since' date is required")
@@ -238,7 +241,7 @@ async def start_search(req: SearchRequest, request: Request):
         )
 
     job = store.create(
-        channel=channel,
+        channels=channels,
         criteria=criteria,
         since_raw=req.since,
         tz_offset_minutes=req.tz_offset_minutes,
@@ -261,10 +264,15 @@ async def start_search(req: SearchRequest, request: Request):
     )
 
     logger.info(
-        "Scan %s started by %s (channel=%s, windows planned on the fly, server_key=%s)",
-        job.id, ip, channel, use_server_key,
+        "Scan %s started by %s (channels=%s, windows planned on the fly, server_key=%s)",
+        job.id, ip, ",".join("@" + c for c in channels), use_server_key,
     )
-    return {"job_id": job.id, "channel": channel, "using_server_key": use_server_key}
+    return {
+        "job_id": job.id,
+        "channels": channels,
+        "channel": ", ".join("@" + c for c in channels),
+        "using_server_key": use_server_key,
+    }
 
 
 @app.get("/search/{job_id}")
