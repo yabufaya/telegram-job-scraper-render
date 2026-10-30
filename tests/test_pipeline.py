@@ -195,3 +195,71 @@ class CursorTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class FieldGateTests(unittest.TestCase):
+    """The server-side backstop against wrong-discipline matches.
+
+    Regression: a scan for an "Electrical and Computer Engineering fresh
+    graduate" returned Graduate Trainee (banking), Project Assistant (social
+    science), Front Desk Assistant, Nurse, and Midwife posts. The model kept
+    them because Ethiopian posts end every list with "or any related field",
+    and the old prompt said to prefer "medium" over dropping a post.
+    """
+
+    CRIT = ("Electrical and Computer Engineering graduate, 0 years experience, "
+            "Addis Ababa")
+
+    DROPS = {
+        "Rammis Bank Graduate Trainee":
+            "B.A Degree in Accounting, Economics, Finance & Accounting Management "
+            "and Business or a closely related field",
+        "IOM Project Assistant":
+            "Bachelor's degree in Political Science, Social Sciences, International "
+            "Relations, Development Studies, or a related field",
+        "Yusra Home Junior Sales":
+            "Diploma or Bachelor's degree in Marketing, Business, or related field",
+        "TTK Junior Accountant":
+            "Position 1: Junior Accountant. BA Degree in Accounting and finance, Economics",
+        "Medical Teams Nurse":
+            "Position 1: Medical Officer. Position 2: Nurse. Position 4: Midwife",
+        "Boeing Customer Support":
+            "1+ Year experience working in a supply chain focused role",
+        "Pan Afric Senior Associate":
+            "Bachelor's Laws (LL.B.). Minimum of 3+ years of active legal practice",
+    }
+
+    KEEPS = {
+        "AMG Junior Electrical Engineer":
+            "Position 1: Junior Electrical Engineer. BSc Degree in Electrical "
+            "Engineering or Electrical and Computer Engineering.",
+        "Huawei Account Manager Intern":
+            "BSc in management, logistics, Marketing, Computer, IT civil engineering. "
+            "Majors in marketing, Engineering, computer & electrical, Computer Science",
+        "No degree line at all":
+            "Position: Junior Technician. Apply via telegram.",
+    }
+
+    def test_wrong_discipline_posts_are_dropped(self):
+        for name, text in self.DROPS.items():
+            keep, _ = pipeline.field_gate(self.CRIT, text)
+            self.assertFalse(keep, f"{name} should have been dropped")
+
+    def test_correct_field_posts_survive(self):
+        for name, text in self.KEEPS.items():
+            keep, _ = pipeline.field_gate(self.CRIT, text)
+            self.assertTrue(keep, f"{name} should have been kept")
+
+    def test_unknown_criteria_never_drops(self):
+        keep, _ = pipeline.field_gate("", "Degree in Nursing")
+        self.assertTrue(keep)
+
+    def test_drop_counter_is_aggregated_by_the_caller(self):
+        batch = [
+            {"id": 1, "text": "B.A Degree in Accounting and Finance", "channel": "c",
+             "date": "2026-10-01T00:00:00+00:00", "link": "l"},
+        ]
+        items = [{"id": 1, "status": "medium", "reason": "Entry-level, business-focused."}]
+        results, _, warns = pipeline.merge_batch_results(items, batch, criteria=self.CRIT)
+        self.assertEqual(results, [])
+        self.assertTrue(any(w.startswith("__field_dropped__:") for w in warns))

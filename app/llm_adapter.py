@@ -27,68 +27,111 @@ MAX_RETRIES = 4
 BASE_DELAY_SECONDS = 2  # 2s, 4s, 8s, 16s
 REQUEST_TIMEOUT_SECONDS = 120
 
-SYSTEM_PROMPT = """You are a job-post relevance filter. You will receive:
-1. Today's date, for checking whether a post's deadline has passed.
-2. A user's search criteria (their background, target field, and requirements).
-3. A batch of Telegram channel posts, each with an id, date, and text.
+SYSTEM_PROMPT = """You are a strict job-post relevance filter. You receive today's
+date, a user's search criteria, and a batch of Telegram channel posts.
 
-For each post, first check if it has an application deadline stated in the
-text (look for words like "Deadline", "Apply before", "Closing date", or a
-date near the top/bottom of the post).
+Your job is to DISCARD almost everything. A post is only a match if a specific
+position in it is one the user could actually be hired for. When in doubt, the
+post is NOT a match.
 
-- If a deadline is stated AND that deadline is before today's date, the
-  post is EXPIRED. Do not treat it as a match, regardless of how well it
-  fits the user's criteria.
-- If a deadline is stated and it is today or in the future, treat it
-  normally alongside the matching rules below.
-- If no deadline is stated at all, treat it normally — do not assume it's
-  expired just because no date is given.
+Work through these gates IN ORDER for every post. Stop at the first gate that
+fails and drop the post.
 
-For every post that is NOT expired, decide whether it is a genuine job
-posting that could reasonably match the user's criteria.
+=== GATE 0 - DEADLINE ===
+Find any stated deadline ("Deadline", "Closing date", "Apply before", or a date
+near the top or bottom).
+- Stated AND before today -> EXPIRED. Report "expired", never a match.
+- Stated and today or later -> continue.
+- Not stated -> continue. Do not invent one.
 
-SENIORITY CHECK (do this explicitly, separately from field matching):
-- First identify each position's seniority level from its title and any
-  stated years-of-experience requirement. Titles containing "Senior",
-  "Manager", "Lead", "Expert", "Head", "Officer" (when paired with a
-  years requirement), or an explicit "X+ years" are NOT entry-level,
-  even if the field/degree matches perfectly.
-- Titles containing "Junior", "Trainee", "Intern", "Graduate Trainee",
-  "Associate", or with no experience stated, ARE entry-level.
-- If the user's criteria specifies an entry-level / fresh-graduate / 0
-  years profile, a post whose relevant position(s) are all senior-level
-  is NOT a match — do not include it just because the field/degree
-  overlaps. A perfect field match at the wrong seniority is still not a
-  match. Only include it if the post explicitly also lists a
-  junior/entry-level position in the same relevant field.
-- If the user's criteria specifies a senior/experienced profile, apply
-  the same logic in reverse — a junior-only post is not a match for them.
-- If the post lists multiple positions in one message (common in these
-  channels), evaluate them individually: match if AT LEAST ONE listed
-  position in the relevant field also fits the user's seniority level.
+=== GATE 1 - REAL JOB? ===
+Is this an actual vacancy notice with a named position? Ads, event promos,
+greetings, news, reposts of other channels' adverts -> DROP.
+A post with no identifiable position title -> DROP.
 
-FIELD CHECK (only after the seniority check passes):
-- Match on MEANING, not exact wording. Treat phrases like "fresh graduate",
-  "entry level", "no experience required", "new grads welcome", "0 exp" as
-  equivalent to "0 years experience."
-- Posts may use abbreviations, emojis, or bullet-point formatting — parse
-  around this, don't require clean prose.
-- If a post is ambiguous or partially matches, INCLUDE it with status
-  "medium" rather than excluding it. Never silently drop a plausible match.
-- Ignore posts that are clearly not job postings (ads, announcements, event
-  promos) even if they share keywords.
-- Do not invent information not present in the post text.
+=== GATE 2 - FIELD ALIGNMENT (the most important gate) ===
+Identify the user's field from their criteria and the DEGREE they hold,
+e.g. "electrical engineer", "computer science", "accounting", "nursing".
 
-Return ONLY a JSON array, one object per post that is either a plausible
-match OR expired (so the caller can report how many were filtered out), in
-this exact shape:
+Then read each position's REQUIRED qualification and decide:
+
+IN RANGE - the qualification explicitly names the user's field or a genuinely
+  interchangeable sibling of it. Examples: user is "Electrical & Computer
+  Engineering" -> "Electrical Engineering", "Computer Engineering",
+  "Electrical and Computer Engineering", "Electronics Engineering",
+  "Computer Science", "Software Engineering", "IT" are IN RANGE.
+
+OUT OF RANGE - the qualification names a DIFFERENT discipline. Examples for
+  that same user: Accounting, Banking & Finance, Economics, Management,
+  Business Administration, Marketing, Sales, Nursing, Public Health,
+  Pharmacy, Law, Social Work, Sociology, Psychology, Development Studies,
+  Political Science, International Relations, Communications, Journalism,
+  Civil Engineering, Mechanical Engineering, Automotive Mechanics,
+  Auto Electrician, Industrial/Manufacturing Technology, TVET Level III
+  welding or machining, Graphic Design, Secretarial Science, Logistics,
+  Procurement, Supply Chain, Human Resources. -> DROP.
+
+THE "RELATED FIELD" TRAP - READ THIS CAREFULLY:
+Ethiopian job posts constantly end their qualification list with "or any
+related field", "or other related fields", "related discipline". This phrase
+is a legal catch-all. It does NOT mean every degree qualifies, and it does NOT
+make an accounting job relevant to an engineer.
+- If the list of named fields contains NOTHING in the user's field, the post is
+  OUT OF RANGE. The phrase "or related field" does not save it.
+- Accept "related field" ONLY when the named fields are already in the user's
+  family of study.
+Count this explicitly: if you cannot point to the user's degree (or a true
+sibling of it) named in the text, DROP the post.
+
+MULTI-POSITION POSTS:
+Posts often list several positions. Evaluate each one separately.
+- Keep the post ONLY if at least one position passes Gate 2.
+- In that case still apply Gate 3 to that specific position.
+- Name the passing position in your reason, e.g. "Position 2: Junior
+  Electrical Engineer fits your degree and requires 1 year."
+- If every position fails, DROP the whole post.
+
+=== GATE 3 - SENIORITY ===
+For the position(s) that passed Gate 2, check the stated experience.
+- User asks for fresh graduate / 0 years: accept positions that state 0
+  years, "fresh graduate", "no experience required", "entry level", or an
+  internship/trainee role.
+- REJECT if the position explicitly requires 1 or more years, OR its title is
+  Senior / Head / Lead / Principal / Director / Manager / Expert / Officer
+  paired with a years requirement, OR it is a Deputy GM, Regional Director,
+  Branch Manager and similar. "Junior Accountant" is fine; "Accountant (1 year)"
+  is not, unless the post separately offers a 0-year junior role.
+- A perfect field match at the wrong seniority is still NOT a match.
+
+=== GATE 4 - LOCATION / OTHER HARD REQUIREMENTS ===
+If the user named a city or region and the post states a different one, DROP.
+If the post requires something the user plainly lacks and states it as
+mandatory (a licence, a specific gender, a professional certification),
+DROP.
+
+=== OUTPUT ===
+Return "high" only when Gates 0-4 all pass cleanly and the field is a direct,
+named match.
+Return "medium" ONLY for a borderline seniority or location detail where the
+field itself is clearly correct - for example a junior role in the user's
+field that also mentions a 1-year preference, or a strong field match whose
+degree list is ambiguous between two closely related engineering branches.
+NEVER use "medium" to keep a post whose field is a different discipline. A
+wrong-discipline post is always DROP, never "medium".
+
+Your reason must state the concrete evidence you relied on, quoting the degree
+or experience line, e.g. "BSc Electrical Engineering, 0 years - matches."
+or for a rejection you do not report, simply omit the post.
+
+Return ONLY a JSON array, one object per post that is either a match OR
+expired, in this exact shape:
 [
-  {"id": <post id, same type as given>, "status": "high" | "medium" | "expired", "reason": "<one short sentence>"}
+  {"id": <post id, same type as given>, "status": "high" | "medium" | "expired", "reason": "<one short sentence quoting the degree/experience you found>", "position": "<the position title that matched, or empty>"}
 ]
-For expired posts, set "status" to "expired" and the reason to the deadline
-found, e.g. "Deadline was Sept 25, 2026 — expired."
-Use the id EXACTLY as provided (do not change its type or formatting).
-Omit posts that are neither a plausible match nor expired. Do not include any text outside the JSON array."""
+For expired posts use status "expired" and reason "Deadline was <date> - expired."
+Use the id EXACTLY as provided (do not change type or formatting).
+OMIT every post that is not a match and not expired. When unsure, omit it.
+Do not include any text outside the JSON array."""
 
 REPAIR_SUFFIX = (
     "\n\nIMPORTANT: your previous reply could not be parsed. Reply with ONLY the JSON "

@@ -36,6 +36,11 @@ async def completions(request: Request):
             out.append({"id": post["id"], "status": "medium", "reason": "Mock: partial match."})
         elif i == 2:
             out.append({"id": post["id"], "status": "expired", "reason": "Mock: deadline passed."})
+        elif i == 4:
+            # Pretend the model hallucinated a wrong-field match, so the server-side
+            # field gate can be exercised end to end.
+            out.append({"id": post["id"], "status": "medium",
+                        "reason": "Entry-level position, though field is business-focused."})
 
     return {
         "choices": [{"message": {"role": "assistant", "content": json.dumps(out)}}],

@@ -320,7 +320,7 @@ async def _run(job: Job, base_url: str, api_key: str, model: str, started: float
             if job.cancelled:
                 raise asyncio.CancelledError
             items = await classify_batch(base_url, api_key, model, job.criteria, batch)
-            merged, expired, warns = pipeline.merge_batch_results(items, batch)
+            merged, expired, warns = pipeline.merge_batch_results(items, batch, criteria=job.criteria)
             return batch_no, merged, expired, warns
 
     tasks = [asyncio.create_task(one(i + 1, b)) for i, b in enumerate(batches)]
@@ -362,7 +362,21 @@ async def _run(job: Job, base_url: str, api_key: str, model: str, started: float
     # 6. Finish --------------------------------------------------------------
     final = pipeline.dedupe_results(results)
     job.results = pipeline.sort_results(final)
-    job.warnings.extend(warnings)
+    # Collapse the per-batch field-gate counters into one line the visitor can read.
+    field_dropped = 0
+    kept: list[str] = []
+    for w in warnings:
+        if w.startswith("__field_dropped__:"):
+            field_dropped += int(w.split(":", 1)[1])
+        else:
+            kept.append(w)
+    if field_dropped:
+        kept.insert(
+            0,
+            f"{field_dropped} post(s) were dropped because the posted field did not "
+            f"match yours.",
+        )
+    job.warnings.extend(kept)
     job.cursor = pipeline.make_cursor(unique_posts)
     job.stage = "done"
     took = int(time.time() - started)

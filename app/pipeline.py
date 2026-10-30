@@ -157,10 +157,143 @@ def build_batches(
     return batches
 
 
+# --------------------------------------------------------------------------- #
+# Disciplines the user is NOT in. Used as a server-side backstop: if the model
+# returns a post whose stated qualification clearly belongs to another family of
+# study and nothing in it names the user's field, we drop it ourselves instead
+# of trusting the verdict. This exists because Ethiopian posts end every list
+# with "or any related field", and models happily read that as "everyone".
+# --------------------------------------------------------------------------- #
+_FIELD_FAMILIES = {
+    "engineering_elec": [
+        "electrical", "electronic", "computer engineering", "electromechanical",
+        "instrumentation", "telecom", "power engineering", "control engineering",
+    ],
+    "computing": [
+        "computer science", "software engineering", "information technology",
+        "information systems", "it ", "ict", "cyber", "data science",
+        "network engineering", "mis",
+    ],
+    "civil": ["civil engineering", "construction management", "structural", "architecture"],
+    "mechanical": [
+        "mechanical engineering", "automotive", "auto mechanic", "metal work",
+        "manufacturing", "industrial technology", "welding", "machining",
+        "general mechanic", "mechanic",
+    ],
+    "business": [
+        "accounting", "accountancy", "finance", "banking", "economics",
+        "management", "business administration", "marketing", "sales",
+        "entrepreneurship", "insurance", "audit",
+    ],
+    "social": [
+        "sociology", "social work", "psychology", "development studies",
+        "political science", "international relations", "public administration",
+        "gender studies", "anthropology", "law ", "ll.b", "legal",
+    ],
+    "health": [
+        "nursing", "public health", "medicine", "medical", "pharmacy",
+        "midwifery", "nutrition", "laboratory technology", "health officer",
+        "doctor",
+    ],
+    "media": [
+        "journalism", "communication", "public relations", "media studies",
+        "linguistic", "language studies", "graphic design", "fine arts",
+        "multimedia",
+    ],
+    "supply": [
+        "supply chain", "procurement", "logistics", "stores management",
+        "purchasing",
+    ],
+    "admin_office": [
+        "secretarial", "office management", "human resource", "hr management",
+        "administrative assistant",
+    ],
+}
+# Families that are close enough that a model's "related field" call is plausible.
+_FIELD_SIBLINGS = {
+    "engineering_elec": {"computing", "mechanical"},
+    "computing": {"engineering_elec", "information"},
+    "civil": {"engineering_elec", "mechanical"},
+    "mechanical": {"engineering_elec", "civil"},
+    "business": {"supply", "admin_office"},
+    "social": {"media", "admin_office"},
+    "health": set(),
+    "media": {"social"},
+    "supply": {"business"},
+    "admin_office": {"business", "social"},
+}
+
+
+def _families_in(text: str) -> set[str]:
+    low = " " + (text or "").lower() + " "
+    hits = set()
+    for family, words in _FIELD_FAMILIES.items():
+        if any(w in low for w in words):
+            hits.add(family)
+    return hits
+
+
+def _user_families(criteria: str) -> set[str]:
+    fams = _families_in(criteria)
+    if fams:
+        return fams
+    # Fall back to a wider net: free text like "electrical engineer".
+    low = (criteria or "").lower()
+    if "engineer" in low:
+        if "civil" in low:
+            return {"civil"}
+        if "mechanical" in low:
+            return {"mechanical"}
+        return {"engineering_elec"}
+    if "computer" in low or "it" in low:
+        return {"computing"}
+    return set()
+
+
+def field_gate(criteria: str, post_text: str, reason: str = "") -> tuple[bool, str]:
+    """Server-side sanity check on a model verdict.
+
+    Returns (keep, note). We only reject on positive evidence: the post names a
+    different discipline group and never names the user's. Absence of any
+    recognised keyword means we cannot tell, so we keep the model's verdict.
+    """
+    user = _user_families(criteria)
+    if not user:
+        return True, ""
+
+    post = _families_in(post_text)
+    if not post:
+        return True, ""  # nothing legible to judge; trust the model
+
+    user_siblings = set()
+    for fam in user:
+        user_siblings.add(fam)
+        user_siblings |= _FIELD_SIBLINGS.get(fam, set())
+
+    if post & user_siblings:
+        return True, ""
+
+    # The post talks only about other disciplines. Reject unless the reason the
+    # model gave explicitly cites the user's own field (it saw something we did
+    # not parse).
+    reason_fams = _families_in(reason)
+    if reason_fams & user_siblings:
+        return True, ""
+
+    return False, (
+        "Dropped: post is about "
+        + ", ".join(sorted(post))
+        + " and does not name your field ("
+        + ", ".join(sorted(user))
+        + ")."
+    )
+
+
 def merge_batch_results(
     llm_items: list[dict],
     batch: list[dict],
     today_iso: str | None = None,
+    criteria: str = "",
 ) -> tuple[list[dict], int, list[str]]:
     """Attach LLM verdicts back to real posts.
 
@@ -177,7 +310,9 @@ def merge_batch_results(
 
     results: list[dict] = []
     expired = 0
+    field_dropped = 0
     warnings: list[str] = []
+    audit: list[str] = []
 
     # Some providers return {"results": [...]} or a single object instead of an
     # array. Normalise here so callers never have to care.
@@ -208,6 +343,12 @@ def merge_batch_results(
             expired += 1
             continue
 
+        keep, gate_note = field_gate(criteria, post.get("text", ""), str(item.get("reason", "")))
+        if not keep:
+            field_dropped += 1
+            audit.append(gate_note)
+            continue
+
         results.append(
             {
                 "id": post.get("id"),
@@ -219,6 +360,9 @@ def merge_batch_results(
                 "reason": str(item.get("reason", ""))[:400],
             }
         )
+
+    if field_dropped:
+        warnings.append(f"__field_dropped__:{field_dropped}")
 
     return results, expired, warnings
 
