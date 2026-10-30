@@ -1233,7 +1233,13 @@ async function runSearch() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        channels: parsedChannels.ok, criteria: criteria, since: since,
+        // Send both shapes. 'channels' is what the current server reads;
+        // 'channel' is kept so a frontend can never 422 against a server that
+        // still declares it as a required field (that mismatch is invisible
+        // until someone clicks Scan).
+        channels: parsedChannels.ok,
+        channel: parsedChannels.ok.length === 1 ? parsedChannels.ok[0] : parsedChannels.ok.join(' '),
+        criteria: criteria, since: since,
         tz_offset_minutes: new Date().getTimezoneOffset(),
         llm_base_url: base, llm_api_key: apiKey, llm_model: model
       })
@@ -1241,7 +1247,21 @@ async function runSearch() {
 
     if (!res.ok) {
       let detail = res.statusText;
-      try { const j = await res.json(); detail = j.detail || detail; } catch (_) {}
+      try {
+        const j = await res.json();
+        if (Array.isArray(j.detail)) {
+          // FastAPI validation errors: say which field, in plain words.
+          detail = j.detail.map(function (d) {
+            const field = (d.loc || []).slice(-1)[0] || 'input';
+            return field + ': ' + (d.msg || 'invalid');
+          }).join(' · ');
+          if (res.status === 422) {
+            detail += ' — this usually means the page and the server are running different versions. Reload the page.';
+          }
+        } else {
+          detail = j.detail || detail;
+        }
+      } catch (_) {}
       setStatus('Error: ' + detail, true);
       finishScanUI();
       return;
