@@ -205,16 +205,8 @@
   .result-date { font-size: .76rem; color: var(--text-dim); font-weight: 600; }
 
   /* ------------------------- criteria helpers ----------------------------- */
-  .chips { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; }
-  .chip {
-    font-size: .79rem; padding: 6px 11px; border-radius: 999px; cursor: pointer;
-    background: var(--panel-raised); border: 1px solid var(--border);
-    color: var(--text-soft); font-weight: 600; font-family: inherit;
-    transition: color .14s ease, border-color .14s ease, background .14s ease;
-  }
-  .chip:hover { color: var(--text); border-color: var(--text-dim); background: var(--panel-hover, var(--panel-raised)); }
-  .chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  .chip.on { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+  #criteria-read { margin-bottom: 4px; }
+  #search-panel .row-split { margin-top: 18px; }
   .criteria-read {
     margin-top: 10px; font-size: .8rem; color: var(--text-soft); display: none;
     padding: 9px 12px; border-radius: 9px; background: var(--panel-raised);
@@ -498,22 +490,9 @@
   <input id="channel" placeholder="@ethio_job_vacancy1 · or https://t.me/Ethiojobs2000">
   <div class="hint">Public channels only. Works without any Telegram login for most channels.</div>
 
-  <label for="criteria">Your field and experience</label>
-  <textarea id="criteria" rows="3" placeholder="Electrical and Computer Engineering graduate, 0 years experience, Addis Ababa"></textarea>
-  <div class="hint">Name your exact degree and years. The filter rejects posts that ask for a different field or more experience.</div>
-  <div class="chips" id="criteria-chips">
-    <button type="button" class="chip" data-fill="Electrical and Computer Engineering graduate">Electrical / Computer</button>
-    <button type="button" class="chip" data-fill="Computer Science graduate">Computer Science / IT</button>
-    <button type="button" class="chip" data-fill="Accounting and Finance graduate">Accounting / Finance</button>
-    <button type="button" class="chip" data-fill="Mechanical Engineering graduate">Mechanical</button>
-    <button type="button" class="chip" data-fill="Civil Engineering graduate">Civil</button>
-    <button type="button" class="chip" data-fill="Nursing graduate">Nursing / Health</button>
-    <button type="button" class="chip" data-fill="Marketing graduate">Marketing / Sales</button>
-  </div>
-  <div class="chips" id="criteria-chips-2">
-    <button type="button" class="chip" data-fill="0 years experience">Fresh graduate</button>
-    <button type="button" class="chip" data-fill="Addis Ababa">Addis Ababa</button>
-  </div>
+  <label for="criteria">Your graduate field and level</label>
+  <textarea id="criteria" rows="3" placeholder="Example: I am a fresh graduate in Accounting and Finance with 0 years of experience, looking for entry-level jobs in Addis Ababa."></textarea>
+  <div class="hint">Write it as one plain sentence: <b>your exact field + your level + your city</b>. The more specific the field, the harder the filter rejects jobs meant for other graduates.</div>
   <div class="criteria-read" id="criteria-read"></div>
 
   <div class="row-split">
@@ -667,76 +646,64 @@ function wireEvents() {
   document.getElementById('search-btn').addEventListener('click', runSearch);
   document.getElementById('cancel-btn').addEventListener('click', cancelScan);
   document.getElementById('since').addEventListener('change', updatePlan);
-  document.querySelectorAll('.chip[data-fill]').forEach(function (chip) {
-    chip.addEventListener('click', function () { applyChip(chip); });
-  });
-  document.getElementById('criteria').addEventListener('input', function () {
-    syncChipState();
-    updateCriteriaRead();
-  });
+  document.getElementById('criteria').addEventListener('input', updateCriteriaRead);
   document.getElementById('llm_api_key').addEventListener('paste', function () {
     setTimeout(function () { setModelsStatus('Key pasted — press "Load models" to check it and see the live list.', false); }, 50);
   });
 }
 
 /* ------------------------------------------------------- criteria helpers
-   Vague criteria are the number one cause of bad matches. "I want a job"
-   gives the model nothing to reject, so it keeps everything. These chips build
-   a sentence that names a degree and a year count, which the filter needs. */
-var DEGREE_CHIPS = ['Electrical and Computer Engineering graduate', 'Computer Science graduate',
-  'Accounting and Finance graduate', 'Mechanical Engineering graduate',
-  'Civil Engineering graduate', 'Nursing graduate', 'Marketing graduate'];
+   No preset buttons: there are too many fields to list, and a fixed list would
+   quietly tell a graduate their field is not supported. Instead the placeholder
+   shows worked examples, and the live readout checks their sentence for the two
+   things the filter actually needs: a named field and a level. */
+var CRITERIA_EXAMPLES = [
+  'Example: I am a fresh graduate in Accounting and Finance with 0 years of experience, looking for entry-level jobs in Addis Ababa.',
+  'Example: I hold a BSc in Mechanical Engineering, 1 year of experience, and I want junior engineering roles in Adama.',
+  'Example: I am a Computer Science graduate with 0 years of experience, open to IT support or software jobs anywhere in Ethiopia.',
+  'Example: I graduated in Nursing and have 2 years of experience, looking for hospital jobs in Addis Ababa.'
+];
+var exampleTimer = null;
+var exampleIndex = 0;
 
-function applyChip(chip) {
+function startPlaceholderRotation() {
   var box = document.getElementById('criteria');
-  var fill = chip.dataset.fill;
-  var current = box.value.trim();
-  var parts = current ? current.split(/,\s*/) : [];
-
-  // degree chips replace each other; the extras accumulate
-  if (DEGREE_CHIPS.indexOf(fill) !== -1) {
-    parts = parts.filter(function (p) {
-      return DEGREE_CHIPS.indexOf(p) === -1;
-    });
-  }
-  var at = parts.indexOf(fill);
-  if (at === -1) parts.unshift(fill); else parts.splice(at, 1);
-
-  box.value = parts.filter(Boolean).join(', ');
-  syncChipState();
-  updateCriteriaRead();
-  box.focus();
+  if (!box || box.value.trim()) return;
+  clearInterval(exampleTimer);
+  exampleTimer = setInterval(function () {
+    if (box.value.trim()) return;          // stop competing once they start typing
+    exampleIndex = (exampleIndex + 1) % CRITERIA_EXAMPLES.length;
+    box.setAttribute('placeholder', CRITERIA_EXAMPLES[exampleIndex]);
+  }, 4200);
 }
 
-function syncChipState() {
-  var current = document.getElementById('criteria').value.trim();
-  document.querySelectorAll('.chip[data-fill]').forEach(function (chip) {
-    chip.classList.toggle('on', current.indexOf(chip.dataset.fill) !== -1);
-  });
-}
+var FIELD_WORDS = /engineer|engineering|computer|software|information|ict|data|account|financ|bank|econom|nurs|midwi|medic|health|pharmac|lab|law|legal|sociolog|social work|psycholog|development stud|political|international relations|communicat|journalis|market|sales|manag|business|administ|secretar|human resource|supply|procure|logistic|mechanic|electric|civil|architect|chemistr|biolog|physic|math|statistic|agricultur|veterinar|teach|educat|geolog|survey|textile|tourism|hotel|catering/i;
+var LEVEL_WORDS = /\b\d+\s*(year|yr)/i;
+var LEVEL_HINTS = /fresh|graduate|intern|trainee|entry|junior|no experience|coop|0 year/i;
 
 function updateCriteriaRead() {
   var raw = document.getElementById('criteria').value;
   var box = document.getElementById('criteria-read');
-  var text = raw.toLowerCase();
+  var text = raw.trim();
 
-  var hasField = DEGREE_CHIPS.some(function (d) { return raw.indexOf(d) !== -1; }) ||
-    /engineer|science|account|financ|nurs|market|econom|law|medic/.test(text);
-  var hasYears = /\b\d+\s*(year|yr)|fresh|graduate|intern|entry|no experience|0 /.test(text);
+  if (!text) { box.classList.remove('show'); return; }
+
+  var hasField = FIELD_WORDS.test(text);
+  var hasLevel = LEVEL_WORDS.test(text) || LEVEL_HINTS.test(text);
+  var hasPlace = /addis|adama|hawassa|bahir|mekelle|dire|gondar|jimma|desse|ethiopia|anywhere|remote|city/i.test(text);
+  var vague = /related field|any field|any job|anything|all jobs/i.test(text);
 
   var notes = [];
-  if (!hasField) notes.push('add <b>your degree</b> — without a field the AI cannot reject accounting or nursing jobs');
-  if (!hasYears) notes.push('add <b>0 years experience</b> — without it senior roles slip through');
-  if (/\bor\b.*\brelated\b|related field|any field|any job/.test(text)) {
-    notes.push('drop the words <b>"related field" / "any"</b> — that phrasing is what lets wrong jobs in');
-  }
+  if (!hasField) notes.push('name <b>your exact field</b> — for example "Accounting and Finance", "Nursing", "Mechanical Engineering"');
+  if (!hasLevel) notes.push('add <b>your level</b> — "fresh graduate, 0 years" or "2 years of experience"');
+  if (!hasPlace) notes.push('add <b>a city</b> — or write "anywhere in Ethiopia"');
+  if (vague) notes.push('remove <b>"related field" / "any job"</b> — that is exactly the wording that lets the wrong jobs in');
 
-  if (!raw.trim()) { box.classList.remove('show'); return; }
   box.classList.add('show');
   box.innerHTML = '';
   if (!notes.length) {
     var ok = document.createElement('div');
-    ok.innerHTML = '&#10003; Good. This is specific enough to filter hard.';
+    ok.innerHTML = '&#10003; Specific enough. The filter will reject jobs that name a different field or ask for more experience.';
     box.appendChild(ok);
   } else {
     notes.forEach(function (n) {
@@ -757,7 +724,7 @@ async function boot() {
   document.getElementById('boot-overlay').classList.add('hide');
   selectProvider(activeProvider, { keepEntry: true });
   refreshCursorHint();
-  syncChipState();
+  startPlaceholderRotation();
   updateCriteriaRead();
   updatePlan();
 }
