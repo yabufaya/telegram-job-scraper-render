@@ -16,16 +16,37 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import random
 from datetime import date
 
 import httpx
 
 logger = logging.getLogger("job_filter")
 
+# 429/5xx are *transient*: the provider is busy or throttling us, not rejecting
+# the request. They are retried with jittered exponential backoff. 15s for the
+# first gap and 60s of total patience matters because a Google capacity spike
+# ("503 UNAVAILABLE, high demand") lasts 30s to a few minutes: the old 2/4/8s
+# ladder gave up after 14s, i.e. always inside the window.
 RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 MAX_RETRIES = 4
-BASE_DELAY_SECONDS = 2  # 2s, 4s, 8s, 16s
+BASE_DELAY_SECONDS = 3       # with jitter: ~2-3s, 4-6s, 8-12s per gap
+# Patience per request. Kept short on purpose: a batch that is still refused
+# after ~25s is split in half instead of waited on, and splitting succeeds far
+# more often than waiting. With a total outage the worst case is therefore
+# ~3 waves x 25s rather than several minutes of the visitor watching a spinner.
+MAX_TOTAL_BACKOFF_SECONDS = 20
 REQUEST_TIMEOUT_SECONDS = 120
+
+# Seen on free Gemini keys. Decided server-side so the visitor is never asked to
+# understand throttling or choose a fallback model.
+FALLBACK_MODEL_HINTS = ("flash-lite", "flash", "lite", "mini")
+
+# Which kind of failure this is, so app/jobs.py can decide whether to split the
+# batch and what the visitor should be told.
+KIND_TRANSIENT = "transient"      # 429 / 503 / timeout — temporary, retry helps
+KIND_PERMANENT = "permanent"      # 401 / 402 / 404 / 400 — retrying cannot help
+KIND_UNKNOWN = "unknown"
 
 SYSTEM_PROMPT = """You are a strict job-post relevance filter. You receive today's
 date, a user's search criteria, and a batch of Telegram channel posts.
@@ -140,7 +161,22 @@ REPAIR_SUFFIX = (
 
 
 class LLMError(Exception):
-    """User-facing LLM failure (bad key, wrong model, provider down...)."""
+    """User-facing LLM failure (bad key, wrong model, provider down...).
+
+    `kind` tells the caller whether this is worth retrying in another shape:
+    a "transient" failure (429, 503, timeout) often succeeds on a smaller batch
+    or a lighter model, whereas "permanent" ones (bad key) never will.
+    """
+
+    def __init__(self, message: str, kind: str = KIND_UNKNOWN, status: int = 0,
+                 retry_after: float = 0.0, unread: int = 0):
+        super().__init__(message)
+        self.kind = kind
+        self.status = status
+        self.retry_after = retry_after
+        # How many posts went unclassified. Set by the caller that knows the
+        # batch size, so accounting survives a batch being split in half.
+        self.unread = unread
 
 
 def build_user_message(criteria: str, posts_batch: list[dict]) -> str:
@@ -202,6 +238,7 @@ async def classify_batch(
     ]
 
     last_error: Exception | None = None
+    waited = 0.0
 
     for attempt in range(1, MAX_RETRIES + 1):
         payload = {"model": model, "messages": messages, "temperature": 0}
@@ -215,23 +252,34 @@ async def classify_batch(
             body = (exc.response.text or "")[:400]
             logger.error("LLM HTTP %s: %s", status, body)
             if status in RETRYABLE_STATUS_CODES and attempt < MAX_RETRIES:
-                delay = BASE_DELAY_SECONDS * (2 ** (attempt - 1))
-                logger.warning("LLM %s — retrying in %ss (%s/%s)", status, delay, attempt, MAX_RETRIES)
+                # Honour the provider's own answer when it sends one; otherwise
+                # back off exponentially *with jitter*, so concurrent batches
+                # stop retrying in lockstep and re-colliding.
+                delay = _retry_after(exc.response) or _jittered(BASE_DELAY_SECONDS, attempt)
+                if waited + delay > MAX_TOTAL_BACKOFF_SECONDS:
+                    raise LLMError(_friendly_http_error(status, body),
+                                   kind=KIND_TRANSIENT, status=status) from exc
+                waited += delay
+                logger.warning("LLM %s — retrying in %.1fs (%s/%s)", status, delay, attempt, MAX_RETRIES)
                 await asyncio.sleep(delay)
                 continue
-            raise LLMError(_friendly_http_error(status, body)) from exc
+            raise LLMError(_friendly_http_error(status, body),
+                           kind=_kind_for_status(status), status=status) from exc
         except httpx.TimeoutException as exc:
             if attempt < MAX_RETRIES:
-                delay = BASE_DELAY_SECONDS * (2 ** (attempt - 1))
-                logger.warning("LLM timeout — retrying in %ss (%s/%s)", delay, attempt, MAX_RETRIES)
+                delay = _jittered(BASE_DELAY_SECONDS, attempt)
+                if waited + delay > MAX_TOTAL_BACKOFF_SECONDS:
+                    raise LLMError("The AI provider did not answer in time.",
+                                   kind=KIND_TRANSIENT) from exc
+                waited += delay
+                logger.warning("LLM timeout — retrying in %.1fs (%s/%s)", delay, attempt, MAX_RETRIES)
                 await asyncio.sleep(delay)
                 continue
-            raise LLMError(
-                "The LLM provider timed out. Some free tiers queue requests one at a time — "
-                "try a smaller date range or a faster model."
-            ) from exc
+            raise LLMError("The AI provider did not answer in time.",
+                           kind=KIND_TRANSIENT) from exc
         except httpx.HTTPError as exc:
-            raise LLMError(f"Could not reach the LLM provider: {exc}") from exc
+            raise LLMError(f"Could not reach the AI provider: {exc}",
+                           kind=KIND_TRANSIENT) from exc
 
         try:
             choice = (data.get("choices") or [{}])[0]
@@ -247,7 +295,50 @@ async def classify_batch(
                 continue
             raise
 
-    raise LLMError(str(last_error) if last_error else "The LLM call failed.")
+    raise LLMError(str(last_error) if last_error else "The AI call failed.", kind=KIND_TRANSIENT)
+
+
+def _jittered(base: float, attempt: int) -> float:
+    """Exponential backoff that is never the same twice.
+
+    Without the random factor every batch sleeps for exactly the same time and
+    they all wake (and get rate-limited) on the same tick.
+    """
+    return base * (2 ** (attempt - 1)) * random.uniform(0.6, 1.0)
+
+
+def _retry_after(response: httpx.Response) -> float:
+    """Seconds the provider asked us to wait, or 0 when it did not say."""
+    raw = response.headers.get("retry-after") or response.headers.get("x-ratelimit-reset")
+    if not raw:
+        return 0.0
+    try:
+        return max(0.0, min(float(raw), MAX_TOTAL_BACKOFF_SECONDS))
+    except ValueError:
+        return 0.0
+
+
+def _kind_for_status(status: int) -> str:
+    if status in RETRYABLE_STATUS_CODES:
+        return KIND_TRANSIENT
+    if status in (401, 402, 403, 404, 400):
+        return KIND_PERMANENT
+    return KIND_UNKNOWN
+
+
+def pick_fallback_model(models: list[str], current: str) -> str:
+    """First live model that is cheaper/lighter than the one that just failed.
+
+    Picked from the provider's own /models list, so nothing is hardcoded and
+    nothing goes stale when a model is retired.
+    """
+    cur = (current or "").lower()
+    for hint in FALLBACK_MODEL_HINTS:
+        for m in models:
+            low = m.lower()
+            if hint in low and low != cur and "preview" not in low:
+                return m
+    return ""
 
 
 def _friendly_http_error(status: int, body: str) -> str:
@@ -263,8 +354,37 @@ def _friendly_http_error(status: int, body: str) -> str:
     if status == 400:
         return f"The provider rejected the request (400). Common cause: model name mismatch. Details: {body[:200]}"
     if status == 429:
-        return "Rate limited (429) by the LLM provider even after retries. Wait a minute or lower concurrency."
-    return f"LLM provider error {status}: {body[:200]}"
+        return ("The AI key hit its request limit for now. We slowed down and retried "
+                "but it was still over the limit.")
+    if status == 503:
+        # Google's "model is currently experiencing high demand" lands here.
+        # Never show the visitor the raw provider JSON — it is not actionable.
+        return ("The AI provider was overloaded and turned the request away. "
+                "This is temporary and on their side.")
+    if status == 500:
+        return "The AI provider had an internal error. This is on their side."
+    if status in (502, 504):
+        return "The AI provider could not answer in time. This is on their side."
+    return f"LLM provider error {status}. {_short_reason(body)}"
+
+
+def _short_reason(body: str, limit: int = 120) -> str:
+    """Pull the provider's own explanation out of a JSON error body.
+
+    A raw payload such as {"error":{"code":503,...}} is never user-facing, but
+    the sentence inside it sometimes is, so extract just that.
+    """
+    try:
+        payload = json.loads(body)
+        err = payload.get("error") if isinstance(payload, dict) else None
+        if isinstance(err, dict):
+            msg = err.get("message") or err.get("status") or ""
+        else:
+            msg = payload.get("message", "") if isinstance(payload, dict) else ""
+        msg = str(msg).strip()
+        return (msg[:limit] + "…") if len(msg) > limit else msg
+    except Exception:  # noqa: BLE001
+        return ""
 
 
 # --------------------------------------------------------------------------- #
@@ -277,10 +397,13 @@ _NOT_CHAT_MODEL_HINTS = (
     "embedding", "embed", "imagen", "veo", "tts", "whisper",
     "image", "audio", "live", "native-audio", "computer-use",
     "prompt-guard", "guard", "rerank", "moderation", "aqa",
+    # "preview" models carry no availability promise and are the first to be
+    # shed when a free tier is under load — they produced most of the 503s.
+    "preview",
 )
 
 _PREFERRED_ORDER = (
-    "flash-lite", "flash", "gpt-oss-20b", "gpt-oss-120b",
+    "flash-lite", "flash-lite-preview", "flash", "gpt-oss-20b", "gpt-oss-120b",
     "llama-3.1-8b", "qwen", "llama", "kimi", "compound",
     "pro", "argon",
 )

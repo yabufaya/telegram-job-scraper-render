@@ -65,7 +65,12 @@ class Job:
     batches_total: int = 0
     batches_done: int = 0
     batches_failed: int = 0
+    posts_unread: int = 0          # posts a failed batch could not classify
     expired_count: int = 0
+    # True when *no* batch survived: the scan produced no evidence either way,
+    # which must never be reported as "no matches".
+    nothing_read: bool = False
+    failure_kind: str = ""         # transient | permanent | unknown
 
     results: list[dict] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
@@ -99,6 +104,9 @@ class Job:
             "batches_total": self.batches_total,
             "batches_done": self.batches_done,
             "batches_failed": self.batches_failed,
+            "posts_unread": self.posts_unread,
+            "nothing_read": self.nothing_read,
+            "failure_kind": self.failure_kind,
             "expired_count": self.expired_count,
             "results": self.results,
             "warnings": self.warnings,
@@ -172,6 +180,21 @@ store = JobStore()
 # --------------------------------------------------------------------------- #
 # The scan itself
 # --------------------------------------------------------------------------- #
+def _failure_sentence(kind: str, unread: int, scanned: int) -> str:
+    """One line about posts we could not read — no jargon, no provider JSON.
+
+    Deliberately contains no advice the visitor cannot act on: telling someone
+    to "lower concurrency" is a note to us in the log, not usable help.
+    """
+    head = f"{unread} of {scanned} post(s) could not be read"
+    if kind == "permanent":
+        return f"{head} — the AI key or model was rejected, so retrying the same scan will not help."
+    if kind == "transient":
+        return (f"{head} — the AI provider was busy or rate-limiting. "
+                f"Retrying, or scanning a shorter date range, usually gets them.")
+    return f"{head}."
+
+
 async def run_scan(
     job: Job,
     *,
@@ -336,11 +359,53 @@ async def _run(job: Job, base_url: str, api_key: str, model: str, started: float
     results: list[dict] = []
     warnings: list[str] = []
 
+    async def classify_resilient(batch: list[dict], depth: int = 0):
+        """Classify a batch, splitting it in half when the provider says no.
+
+        A 429 or a 503 is a statement about *size and speed*, not about content:
+        15 posts in one request is a big token burst that a free tier refuses,
+        while two requests of 7 usually go through. So on a transient error the
+        batch is halved and each half retried once. Only what still fails after
+        that is reported as unread — the old behaviour threw the whole batch
+        away, which is how a scan of 84 posts produced 0 matches.
+
+        Permanent failures (bad key, wrong model) are not split: the same key
+        will fail the same way, so splitting only wastes the visitor's quota.
+        """
+        try:
+            return await classify_batch(base_url, api_key, model, job.criteria, batch)
+        except LLMError as exc:
+            job.failure_kind = job.failure_kind or exc.kind
+            if exc.kind != "transient" or len(batch) < 2 or depth >= 1:
+                raise
+            mid = len(batch) // 2
+            logger.info(
+                "Scan %s: %s — splitting %s post(s) into %s + %s and retrying",
+                job.id, exc.kind, len(batch), mid, len(batch) - mid,
+            )
+            halves = []
+            lost = 0
+            for part in (batch[:mid], batch[mid:]):
+                try:
+                    halves.extend(await classify_resilient(part, depth + 1))
+                except LLMError as sub:
+                    lost += len(part)
+                    job.failure_kind = job.failure_kind or sub.kind
+                    logger.warning("Scan %s: half of a batch also failed: %s", job.id, sub)
+            if halves:
+                if lost:
+                    # Partial recovery: the posts we did get are returned, and
+                    # the ones we did not are counted by the caller.
+                    job.posts_unread += lost
+                return halves
+            exc.unread = len(batch)
+            raise
+
     async def one(batch_no: int, batch: list[dict]):
         async with semaphore:
             if job.cancelled:
                 raise asyncio.CancelledError
-            items = await classify_batch(base_url, api_key, model, job.criteria, batch)
+            items = await classify_resilient(batch)
             merged, expired, warns = pipeline.merge_batch_results(items, batch, criteria=job.criteria)
             return batch_no, merged, expired, warns
 
@@ -360,11 +425,13 @@ async def _run(job: Job, base_url: str, api_key: str, model: str, started: float
                 raise
             except LLMError as exc:
                 job.batches_failed += 1
-                warnings.append(f"Batch failed: {exc}")
+                job.posts_unread += exc.unread
+                job.failure_kind = job.failure_kind or exc.kind
+                warnings.append(f"__failed__:{exc.kind}:{exc}")
                 logger.warning("Scan %s: %s", job.id, exc)
             except Exception as exc:  # noqa: BLE001
                 job.batches_failed += 1
-                warnings.append(f"Batch failed: {type(exc).__name__}")
+                warnings.append(f"__failed__:unknown:{type(exc).__name__}")
                 logger.exception("Scan %s: batch crashed", job.id)
             job.message = (
                 f"Classifying… {job.batches_done + job.batches_failed}/{job.batches_total} batches"
@@ -397,14 +464,39 @@ async def _run(job: Job, base_url: str, api_key: str, model: str, started: float
             f"{field_dropped} post(s) were dropped because the posted field did not "
             f"match yours.",
         )
+
+    # Turn the opaque "Batch failed: ..." lines into one sentence a visitor can
+    # understand, and keep the technical reason only for the server log. The
+    # visitor is never asked to change concurrency or pick a model — those are
+    # our decisions, not theirs.
+    failures = [w for w in kept if w.startswith("__failed__:")]
+    kept = [w for w in kept if not w.startswith("__failed__:")]
+    job.nothing_read = bool(job.batches_total) and job.posts_unread >= job.posts_scanned > 0
+    if failures and not job.nothing_read:
+        kind = failures[0].split(":", 2)[1]
+        kept.insert(0, _failure_sentence(kind, job.posts_unread, job.posts_scanned))
     job.warnings.extend(kept)
     job.cursor = pipeline.make_cursor(unique_posts)
     job.stage = "done"
     took = int(time.time() - started)
-    job.message = (
-        f"Done in {took}s — {len(job.results)} match(es) from {job.posts_scanned} post(s)"
-        f"{f' ({job.duplicates_removed} duplicate(s) dropped)' if job.duplicates_removed else ''}."
-    )
+    if job.nothing_read:
+        # Nothing was classified, so there is no evidence about matching at all.
+        # Saying "0 matches" here is what sent people off to rewrite a profile
+        # that was never tested.
+        job.message = (
+            f"Stopped after {took}s — none of the {job.posts_scanned} post(s) could be read. "
+            f"Nothing was checked, so this is not a matching result."
+        )
+    elif job.posts_unread:
+        job.message = (
+            f"Done in {took}s — {len(job.results)} match(es) from {job.posts_scanned} post(s); "
+            f"{job.posts_unread} post(s) could not be read."
+        )
+    else:
+        job.message = (
+            f"Done in {took}s — {len(job.results)} match(es) from {job.posts_scanned} post(s)"
+            f"{f' ({job.duplicates_removed} duplicate(s) dropped)' if job.duplicates_removed else ''}."
+        )
     job.current_window = ""
     logger.info(
         "Scan %s done: %s match(es), %s expired, %s batch failure(s), %s duplicate(s)",

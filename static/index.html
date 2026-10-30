@@ -184,6 +184,19 @@
   }
   .warnings b { color: var(--danger); }
 
+  /* Shown only after a scan actually failed. Amber, not red: nothing here is
+     broken, the provider was busy — and there is a way forward. */
+  .failure-help {
+    margin-top: 14px; padding: 16px 18px; border: 1px solid var(--warn);
+    background: var(--warn-dim); border-radius: var(--radius); font-size: .87rem;
+  }
+  .failure-help b { display: block; margin-bottom: 6px; color: var(--warn); }
+  .failure-help p { margin: 0 0 10px; color: var(--text); line-height: 1.55; }
+  .failure-help ul { margin: 0 0 12px 18px; padding: 0; color: var(--text-soft); }
+  .failure-help li { margin: 3px 0; line-height: 1.5; }
+  .failure-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  .failure-actions button { cursor: pointer; }
+
   /* ------------------------------ results --------------------------------- */
   .results { margin-top: 16px; display: flex; flex-direction: column; gap: 10px; }
   .result {
@@ -544,10 +557,11 @@
   <div class="stat warned" id="stat-expired-box" style="display:none"><div class="num" id="stat-expired">0</div><div class="label">Expired, skipped</div></div>
   <div class="stat"><div class="num" id="stat-dupes" style="display:none">0</div><div class="label" id="stat-dupes-label" style="display:none">Duplicates dropped</div></div>
   <div class="stat warned" id="stat-field-box" style="display:none"><div class="num" id="stat-field">0</div><div class="label">Wrong field, dropped</div></div>
-  <div class="stat failed" id="stat-failed-box" style="display:none"><div class="num" id="stat-failed">0</div><div class="label">Batches failed</div></div>
+  <div class="stat failed" id="stat-failed-box" style="display:none"><div class="num" id="stat-failed">0</div><div class="label" id="stat-failed-label">Batches failed</div></div>
 </div>
 
 <div id="warnings-slot"></div>
+<div id="failure-help"></div>
 <div class="results" id="results"></div>
 
 <script>
@@ -617,6 +631,7 @@ const PROVIDERS = {
 
 let currentJobId = null;
 let pollTimer = null;
+let lastJob = null;   // last /search/{id} payload, used by the empty-state and failure copy
 let config = {};
 let activeProvider = 'gemini';
 let loadedModels = [];
@@ -1202,6 +1217,7 @@ async function runSearch() {
   const model = document.getElementById('llm_model').value.trim();
 
   localStorage.setItem(LS.inputs, JSON.stringify({ channel: channel, criteria: criteria }));
+  clearFailureHelp();
 
   if (!parsedChannels.ok.length) {
     return setStatus(parsedChannels.bad.length
@@ -1327,8 +1343,13 @@ function renderJob(job) {
   toggleStat('stat-expired-box', job.expired_count > 0, job.expired_count);
   const dupBox = document.getElementById('stat-dupes').parentElement;
   dupBox.style.display = job.duplicates_removed > 0 ? 'block' : 'none';
+  document.getElementById('stat-dupes').style.display = job.duplicates_removed > 0 ? 'block' : 'none';
+  document.getElementById('stat-dupes-label').style.display = job.duplicates_removed > 0 ? 'block' : 'none';
   if (job.duplicates_removed > 0) document.getElementById('stat-dupes').textContent = job.duplicates_removed;
-  toggleStat('stat-failed-box', job.batches_failed > 0, job.batches_failed);
+  toggleStat('stat-failed-box', job.batches_failed > 0,
+             job.posts_unread || job.batches_failed);
+  document.getElementById('stat-failed-label').textContent =
+    job.posts_unread ? 'Posts not read' : 'Batches failed';
   // The field gate reports itself through warnings; show it as a stat and keep
   // it out of the red "something went wrong" banner.
   const fieldWarn = (job.warnings || []).find(function (w) {
@@ -1341,10 +1362,16 @@ function renderJob(job) {
   if (job.error) setStatus('Error: ' + job.error, true);
   else if (job.stage === 'done') setStatus(job.message, false);
 
+  lastJob = job;
+  // The failure help box below already explains unread posts in plain words, so
+  // the same fact must not also appear in the red banner: two messages saying
+  // the same thing look like two different problems.
   renderWarnings((job.warnings || []).filter(function (w) {
-    return w.indexOf('posted field did not match') === -1;
+    return w.indexOf('posted field did not match') === -1 &&
+           w.indexOf('could not be read') === -1;
   }));
   renderResults(job.results || []);
+  if (job.done && (job.posts_unread || job.nothing_read)) renderFailureHelp(job);
 
   if (job.stage === 'done') {
     saveCursor(job);
@@ -1354,6 +1381,9 @@ function renderJob(job) {
 
 function saveCursor(job) {
   if (!job.cursor) return;
+  // Never checkpoint a scan that could not read its posts: the cursor means
+  // "already covered", and those posts were not.
+  if (job.nothing_read) return;
   localStorage.setItem(LS.cursor, JSON.stringify({
     channel: document.getElementById('channel').value.trim(),
     oldest_date: job.cursor.oldest_date,
@@ -1362,6 +1392,107 @@ function saveCursor(job) {
     at: new Date().toISOString()
   }));
   refreshCursorHint();
+}
+
+/* Shown only when something actually failed — never after a clean scan.
+ *
+ * Two rules, both from real complaints:
+ *   1. Never shrink the date range silently. The button says exactly what will
+ *      be scanned, and the range only changes when the visitor clicks it.
+ *   2. Suggest only what the visitor can act on: a shorter range, a lighter
+ *      model, or waiting. Never "lower concurrency".
+ */
+function renderFailureHelp(job) {
+  const slot = document.getElementById('failure-help');
+  slot.textContent = '';
+  if (!job) return;
+
+  const all = !!job.nothing_read;
+  const kind = job.failure_kind || 'transient';
+
+  const box = document.createElement('div');
+  box.className = 'failure-help';
+
+  const title = document.createElement('b');
+  title.textContent = all
+    ? 'The AI provider was too busy to check anything'
+    : (job.posts_unread + ' post(s) could not be checked');
+  box.appendChild(title);
+
+  const p = document.createElement('p');
+  if (kind === 'permanent') {
+    p.textContent = 'The key or model was rejected, so retrying this exact scan will not help. ' +
+      'Check the key in the section above, or pick another model.';
+  } else if (all) {
+    p.textContent = 'Nothing was read, so this is not "zero jobs" — it is "zero posts checked". ' +
+      'Free API keys allow only a few requests per minute, and the provider stayed over that ' +
+      'limit for the whole scan. Spikes like this are temporary and happen on the provider\'s side.';
+  } else {
+    p.textContent = 'Those posts were never classified, so a job could be hiding in them. ' +
+      'The matches above are still valid.';
+  }
+  box.appendChild(p);
+
+  if (kind !== 'permanent') {
+    const tips = document.createElement('ul');
+    const shortDays = suggestShorterRange();
+    [
+      'Scan fewer days — free keys get through a short window reliably.',
+      'Pick a "flash-lite" style model — heavier and "preview" models are the ones that get busy.',
+      'Wait a few minutes: this kind of overload clears on its own.'
+    ].forEach(function (t) { tips.appendChild(Object.assign(document.createElement('li'), { textContent: t })); });
+    box.appendChild(tips);
+
+    const bar = document.createElement('div');
+    bar.className = 'failure-actions';
+
+    // Retry the same range, unchanged, because the visitor chose it.
+    const same = document.createElement('button');
+    same.className = 'small';
+    same.id = 'retry-same-btn';
+    same.textContent = 'Retry this scan';
+    same.addEventListener('click', function () { runSearch(); });
+    bar.appendChild(same);
+
+    // Or shrink it — but say the exact new range, and only act on a click.
+    if (shortDays) {
+      const shrink = document.createElement('button');
+      shrink.className = 'small';
+      shrink.id = 'retry-short-btn';
+      shrink.textContent = 'Retry with ' + shortDays.days + ' days (' + shortDays.label + ')';
+      shrink.addEventListener('click', function () {
+        document.getElementById('since').value = shortDays.value;
+        document.getElementById('resume').value = 'date';
+        updatePlan();
+        runSearch();
+      });
+      bar.appendChild(shrink);
+    }
+    box.appendChild(bar);
+  }
+
+  slot.appendChild(box);
+}
+
+/* Work out a shorter range that keeps the same "newest" end date, and label it
+ * so the button can be honest about what it will scan. */
+function suggestShorterRange() {
+  const since = document.getElementById('since').value;
+  if (!since) return null;
+  const start = new Date(since + 'T00:00:00Z');
+  const days = Math.round((Date.now() - start.getTime()) / 86400000);
+  if (days <= 8) return null;              // already short; shrinking adds nothing
+  const target = days > 14 ? 7 : 3;
+  const d = new Date(Date.now() - target * 86400000);
+  const value = d.toISOString().slice(0, 10);
+  const label = d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) +
+    ' → ' + new Date().toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+  return { days: target, value: value, label: label };
+}
+
+function clearFailureHelp() {
+  const slot = document.getElementById('failure-help');
+  if (slot) slot.textContent = '';
 }
 
 function finishScanUI() {
@@ -1453,7 +1584,19 @@ function renderResults(results) {
     if (document.getElementById('stats').style.display !== 'none') {
       const empty = document.createElement('div');
       empty.className = 'empty-state';
-      empty.textContent = 'No matching posts in this range. Try widening the date, or describe your profile differently.';
+      const job = lastJob || {};
+      if (job.nothing_read) {
+        // No post was classified at all. This is a failure, not an empty
+        // result: telling someone to rewrite their profile here sends them to
+        // fix something that was never tested.
+        empty.textContent = 'None of these posts could be checked, so there is no ' +
+          'matching result either way — not "zero jobs", just "zero posts read".';
+      } else if (job.posts_unread) {
+        empty.textContent = 'No matches among the posts that were read, but ' +
+          job.posts_unread + ' post(s) could not be checked — so this list may be incomplete.';
+      } else {
+        empty.textContent = 'No matching posts in this range. Try widening the date, or describe your profile differently.';
+      }
       el.appendChild(empty);
     }
     return;

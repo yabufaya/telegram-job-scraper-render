@@ -193,6 +193,64 @@ class CursorTests(unittest.TestCase):
         self.assertTrue(cursor["oldest_date"].startswith("2026-01-01"))
 
 
+class FailureReportingTests(unittest.TestCase):
+    """The bug these lock down: a scan where every batch failed was reported as
+    "no matching posts", which sent the user off to rewrite their profile even
+    though no post had ever been classified."""
+
+    def test_transient_and_permanent_are_distinguished(self):
+        from app import llm_adapter as la
+        self.assertEqual(la._kind_for_status(503), la.KIND_TRANSIENT)
+        self.assertEqual(la._kind_for_status(429), la.KIND_TRANSIENT)
+        self.assertEqual(la._kind_for_status(401), la.KIND_PERMANENT)
+        self.assertEqual(la._kind_for_status(404), la.KIND_PERMANENT)
+
+    def test_503_never_shows_raw_provider_json(self):
+        from app import llm_adapter as la
+        body = ('[{"error": {"code": 503, "message": "This model is currently '
+                'experiencing high demand.", "status": "UNAVAILABLE"}}]')
+        msg = la._friendly_http_error(503, body)
+        self.assertNotIn('"error"', msg)
+        self.assertNotIn("UNAVAILABLE", msg)
+        self.assertNotIn("429", msg)
+        self.assertIn("overloaded", msg.lower())
+
+    def test_no_message_asks_for_concurrency(self):
+        """A visitor cannot change our concurrency, so the copy must not ask."""
+        from app import llm_adapter as la
+        from app.jobs import _failure_sentence
+        for status in (429, 500, 502, 503, 504, 400, 401, 402, 404):
+            self.assertNotIn("concurrency", la._friendly_http_error(status, "{}").lower())
+        for kind in ("transient", "permanent", "unknown"):
+            line = _failure_sentence(kind, 12, 84).lower()
+            self.assertNotIn("concurrency", line)
+            self.assertNotIn("429", line)
+            self.assertNotIn("503", line)
+
+    def test_failure_sentence_counts_posts(self):
+        from app.jobs import _failure_sentence
+        self.assertIn("12 of 84", _failure_sentence("transient", 12, 84))
+        self.assertIn("will not help", _failure_sentence("permanent", 12, 84))
+
+    def test_preview_models_are_not_offered(self):
+        from app.llm_adapter import _looks_like_chat_model
+        self.assertFalse(_looks_like_chat_model("gemini-3-flash-preview"))
+        self.assertFalse(_looks_like_chat_model("gemini-3.1-pro-preview"))
+        self.assertTrue(_looks_like_chat_model("gemini-3.5-flash-lite"))
+
+    def test_fallback_model_skips_preview_and_current(self):
+        from app.llm_adapter import pick_fallback_model
+        models = ["gemini-3.8-flash", "gemini-3.1-pro-preview", "gemini-3.5-flash-lite"]
+        got = pick_fallback_model(models, "gemini-3.8-flash")
+        self.assertEqual(got, "gemini-3.5-flash-lite")
+        self.assertEqual(pick_fallback_model(models, "gemini-3.5-flash-lite"), "gemini-3.8-flash")
+
+    def test_backoff_has_jitter(self):
+        from app.llm_adapter import _jittered
+        samples = {round(_jittered(3, 1), 3) for _ in range(12)}
+        self.assertGreater(len(samples), 1, "backoff must not be identical every time")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
 
