@@ -414,9 +414,9 @@
       </div>
     </div>
     <div class="theme-toggle" role="group" aria-label="Colour theme">
-      <button type="button" data-theme-btn="system" title="Follow system" aria-pressed="true">◐</button>
-      <button type="button" data-theme-btn="light" title="Light" aria-pressed="false">☀</button>
-      <button type="button" data-theme-btn="dark" title="Dark" aria-pressed="false">☾</button>
+      <button type="button" data-theme-btn="system" title="Follow my device setting" aria-pressed="false">◐</button>
+      <button type="button" data-theme-btn="light" title="Day mode (default)" aria-pressed="true">☀</button>
+      <button type="button" data-theme-btn="dark" title="Night mode" aria-pressed="false">☾</button>
     </div>
   </div>
   <p class="intro">Reads one or several public Telegram job channels at once, skips posts past their deadline, and shows only what matches your profile. Free to use — the AI runs on your own free API key.</p>
@@ -634,15 +634,17 @@ function applyTheme(mode) {
 }
 
 function initTheme() {
-  let saved = 'system';
-  try { saved = localStorage.getItem(LS.theme) || 'system'; } catch (_) {}
+  // Day mode is the default. Someone on a dark OS still starts light until
+  // they pick the moon or the half-circle (follow system) themselves.
+  let saved = 'light';
+  try { saved = localStorage.getItem(LS.theme) || 'light'; } catch (_) {}
   applyTheme(saved);
   document.querySelectorAll('[data-theme-btn]').forEach(function (btn) {
     btn.addEventListener('click', function () { applyTheme(btn.dataset.themeBtn); });
   });
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () {
-    let mode = 'system';
-    try { mode = localStorage.getItem(LS.theme) || 'system'; } catch (_) {}
+    let mode = 'light';
+    try { mode = localStorage.getItem(LS.theme) || 'light'; } catch (_) {}
     if (mode === 'system') applyTheme('system');
   });
 }
