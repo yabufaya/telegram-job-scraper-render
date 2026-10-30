@@ -208,7 +208,18 @@
     font-size: .9rem; margin-top: 10px; white-space: pre-wrap; color: var(--text);
     max-height: 260px; overflow: hidden; position: relative;
   }
+  .result-text::after {
+    content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 46px;
+    background: linear-gradient(to bottom, transparent, var(--panel));
+    pointer-events: none;
+  }
   .result-text.expanded { max-height: none; }
+  .result-text.expanded::after { display: none; }
+  .result-text a {
+    color: var(--accent); text-decoration: underline; text-underline-offset: 2px;
+    overflow-wrap: anywhere; word-break: break-word;
+  }
+  .result-text a:hover { color: var(--accent-strong, var(--accent)); }
   .result-actions { margin-top: 12px; display: flex; gap: 9px; flex-wrap: wrap; align-items: center; }
   .btn-solid {
     font-size: .84rem; padding: 8px 14px; border-radius: 8px; cursor: pointer; text-decoration: none;
@@ -216,6 +227,12 @@
     transition: background .15s ease;
   }
   .btn-solid:hover { background: var(--accent-hover); }
+  .btn-ghost {
+    font-size: .84rem; padding: 7px 13px; border-radius: 8px; cursor: pointer; text-decoration: none;
+    background: transparent; color: var(--text-soft); font-weight: 600;
+    border: 1px solid var(--border-strong); transition: color .15s ease, border-color .15s ease;
+  }
+  .btn-ghost:hover { color: var(--text); border-color: var(--text-dim); }
 
   .empty-state {
     margin-top: 16px; padding: 26px 20px; text-align: center; color: var(--text-soft);
@@ -1121,6 +1138,46 @@ async function cancelScan() {
   } catch (_) {}
 }
 
+/* --------------------------------------------------------------- links in text
+   Telegram post text arrives as one flat string. URLs inside it used to be drawn
+   as plain characters, so "https://..." was unclickable. We now split the string
+   into text nodes and real <a> elements. Built with createElement/createTextNode
+   only - never innerHTML - so post content can never inject markup. */
+var URL_RE = /https?:\/\/[^\s<>"']+/g;
+var TELEGRAM_RE = /^https?:\/\/(t\.me|telegram\.me|telegram\.dog)\//i;
+
+function cleanUrl(raw) {
+  return raw.replace(/[)\].,;:!?\u201d\u2019]+$/, '');
+}
+
+function extractApplyUrl(text) {
+  var found = (text || '').match(URL_RE) || [];
+  for (var i = 0; i < found.length; i++) {
+    var url = cleanUrl(found[i]);
+    if (!TELEGRAM_RE.test(url)) return url;
+  }
+  return '';
+}
+
+function fillRichText(el, text) {
+  el.textContent = '';
+  URL_RE.lastIndex = 0;
+  var last = 0, m;
+  while ((m = URL_RE.exec(text)) !== null) {
+    var raw = m[0];
+    var url = cleanUrl(raw);
+    if (m.index > last) el.appendChild(document.createTextNode(text.slice(last, m.index)));
+    var a = document.createElement('a');
+    a.href = url;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    a.textContent = url;
+    el.appendChild(a);
+    last = m.index + url.length;
+  }
+  if (last < text.length) el.appendChild(document.createTextNode(text.slice(last)));
+}
+
 /* ------------------------------------------------------------------ render */
 function resetResults() {
   document.getElementById('results').textContent = '';
@@ -1178,30 +1235,26 @@ function renderResults(results) {
     reason.textContent = m.reason || '';
 
     const text = m.text || '';
-    const isLong = text.length > 300;
-    const shortText = isLong ? text.slice(0, 300) + '…' : text;
     const textEl = document.createElement('div');
     textEl.className = 'result-text';
     textEl.id = 'text-' + i;
-    textEl.textContent = shortText;
+    fillRichText(textEl, text);
 
     const actions = document.createElement('div');
     actions.className = 'result-actions';
-    if (isLong) {
-      const toggle = document.createElement('button');
-      toggle.className = 'small';
-      toggle.textContent = 'Show full text';
-      let expanded = false;
-      toggle.addEventListener('click', function () {
-        expanded = !expanded;
-        textEl.textContent = expanded ? text : shortText;
-        textEl.classList.toggle('expanded', expanded);
-        toggle.textContent = expanded ? 'Show less' : 'Show full text';
-      });
-      actions.appendChild(toggle);
+    const applyUrl = extractApplyUrl(text);
+    if (applyUrl) {
+      const applyEl = document.createElement('a');
+      applyEl.className = 'btn-solid';
+      applyEl.href = applyUrl;
+      applyEl.target = '_blank';
+      applyEl.rel = 'noopener noreferrer';
+      applyEl.textContent = 'Apply\u2197';
+      actions.appendChild(applyEl);
     }
+
     const linkEl = document.createElement('a');
-    linkEl.className = 'btn-solid';
+    linkEl.className = 'btn-ghost';
     linkEl.href = m.link;
     linkEl.target = '_blank';
     linkEl.rel = 'noopener noreferrer';
@@ -1213,6 +1266,20 @@ function renderResults(results) {
     card.appendChild(textEl);
     card.appendChild(actions);
     el.appendChild(card);
+
+    // Clamped by CSS, not by slicing. A sliced string cut this exact post's link
+    // in half (the URL began at char 436 of 573), so the apply link vanished.
+    // Measured after insertion because scrollHeight is 0 while detached.
+    if (textEl.scrollHeight > textEl.clientHeight + 8) {
+      const toggle = document.createElement('button');
+      toggle.className = 'small';
+      toggle.textContent = 'Show full text';
+      toggle.addEventListener('click', function () {
+        const open = textEl.classList.toggle('expanded');
+        toggle.textContent = open ? 'Show less' : 'Show full text';
+      });
+      actions.insertBefore(toggle, actions.firstChild);
+    }
   });
 }
 
